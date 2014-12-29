@@ -1,0 +1,4 @@
+# author: min chen(minchen@ubuntukylin.com) 2014
+1. error "get_image_metadata_v2: no meta_header_seq input"
+database is old, renew database
+./admin_job database

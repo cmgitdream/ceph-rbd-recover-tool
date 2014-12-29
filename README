@@ -1,0 +1,70 @@
+# author: min chen(minchen@ubuntukylin.com) 2014
+
+
+------------- rbd recovery tool -------------
+
+rbd recover tool is based on ceph-0.8x.y (Firefly and upper)
+mainly for offline rbd image recovery, when all ceph services are killed
+this tool just satisfy:
+-osdmap is not changed, no pg migration
+-pg epoch is sync with object content
+-journal is flushed to disk
+
+before you run this tool, you should make sure that:
+1). all processes (ceph-osd, ceph-mon, ceph-mds) are shutdown
+2). ssh deamon is running & network is ok (ssh to each node without password)
+3). ceph-kvstore-tool is installed(for ubuntu: apt-get install ceph-test)
+4). osd's disk is not crashed, osd's data is not lost
+
+-architecture:
+  admin_job		osd_job
+                      +---- osd.0
+                      |
+admin_node -----------+---- osd.1
+                      |
+                      +---- osd.2
+		      |
+                      ......
+
+-files:
+admin_node: {admin_job  common_h  database_h  env  epoch_h  metadata_h  osd_host  osd_job}
+osd:        {osd_job common_h  env  epoch_h  metadata_h} #/var/osd_job
+
+
+-config file
+env:  ceph osd path, default ceph conf: echo /var/lib/ceph/osd > env
+osd_host: osd hostnames of this ceph cluster. one hostname per line
+# vi osd_host 
+  hostname0
+  hostname1
+  ......
+mon_host: all mon nodes hostname
+mds_host: all mds nodes hostname
+
+
+-usage:
+./admin_job <operation>
+<operation> :
+database		#generating offline database: hobject path, node hostname, pg_epoch and image metadata
+list			#list all images from offline database
+lookup <image_name>	#lookup image metadata in offline database
+recover <image_name>	#recover image data according to image metadata
+
+-steps:
+1. setup config files: env and osd_host
+2. ./admin_job database 	# wait a long time 
+3. ./admin_job recover <image_name>
+
+
+-debug & error check
+if admin_node operation is failed, you can check it on osd node
+# cd /var/osd_job
+# ./osd_job <operation>
+<opeartion> :
+get_image_id <image_id_hobject>		#get image id of image format v2 
+get_image_id <image_header_hobject>	#get image id of image format v1
+do_image_metadata_v1 <image_name>  	#get image metadata of image format v1, maybe pg epoch is not latest
+do_image_metadata_v2 <image_name>  	#get image metadata of image format v2, maybe pg epoch is not latest
+do_image_list 				#get all images on this osd(image head hobject)
+do_pg_epoch				#get all pg epoch and store it in /var/single_node/node_pg_epoch
+do_omap_list    			#list all omap headers and omap entries on this osd
