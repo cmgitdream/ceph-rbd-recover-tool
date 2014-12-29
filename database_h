@@ -1,0 +1,369 @@
+#!/bin/bash
+# file: database_h
+# author: min chen(minchen@ubuntukylin.com) 2014
+
+. common_h
+. metadata_h
+. epoch_h
+
+db_image_prefix=
+db_image_size=
+db_order=
+found=0
+
+#init osd_data and get all objects path
+function gen_database()
+{
+  local func="gen_database"
+  rm -rf $database/*
+  mkdir -p $database
+  for host in `cat $osd_host`
+  do
+    {
+      echo "$func: $host"
+      local osd_data=`get_osd_data_remote $host`
+      local cmds="find $osd_data/current -type f"
+      ssh $ssh_option $host $cmds > $database/$host
+    } &
+    
+  done
+  wait
+  echo "$func: finish"
+}
+
+# collect hobjects from database 
+# and choose the object whose epoch is lateset
+# then, sort the objects by their offsets in image 
+function gather_hobject_nosnap()
+{
+  func="gather_hobject_nosnap"
+  if [ "$1"x = ""x ];then
+    echo "$func: image_prefix not input"  
+    exit
+  fi
+
+  local image_prefix=$1
+  local underline_image_prefix=`convert_underline $1`
+  local dump_image_prefix=`dump_backslash $underline_image_prefix`
+  local images_raw=$images/raw
+  local image_hobjects_raw=$images_raw/$image_prefix
+  local image_hobjects_stable=$images/$image_prefix
+
+  mkdir -p $images_raw
+
+  pushd $database >/dev/null
+  grep -r -E $dump_image_prefix".*__head_.*" * >$image_hobjects_raw
+  if [ "`cat $image_hobjects_raw`"x = ""x ];then
+    echo "$func: image[$image_prefix] is empty"
+    exit
+  fi
+  popd >/dev/null
+
+  if [ ! -e $image_hobjects_raw ];then
+    echo "$func: image is empty"
+    exit
+  fi
+
+  local offset_dir_temp=$images_raw/$image_prefix"_dir_temp"
+  rm -rf $offset_dir_temp
+  mkdir -p $offset_dir_temp
+
+  echo "$func ..."
+
+  # format: ceph2:/var/lib/ceph/osd/ceph-1/current/2.d3_head/rb.0.1293.6b8b4567.000000000002__head_FB425CD3__2
+  local tmp_image=$offset_dir_temp/tmpimage
+  >$tmp_image
+  cat $image_hobjects_raw | 
+  awk -F ':' '
+  BEGIN {
+    pg_coll="'$pg_coll'"
+    tmp_image="'$tmp_image'"
+  }{ 
+      # $2 = /var/lib/ceph/osd/ceph-1/current/2.d3_head/rb.0.1293.6b8b4567.000000000002__head_FB425CD3__2
+
+      split($2, arr1, "current/");   # {/var/lib/ceph/osd/ceph-1/, 2.d3_head/rb.0.1293.6b8b4567.000000000002__head_FB425CD3__2}
+      split(arr1[2], arr2, "/");     # {2.d3_head, rb.0.1293.6b8b4567.000000000002__head_FB425CD3__2} 
+      split(arr2[1], arr3, "_head"); # {2.d3,} 
+
+      hobject=$2
+      gsub(/\\u/, "\\\\\\\\\\\\\\\\u", hobject); # dump backslash to delay escape (\ -> \\)
+      node = $1;
+      pgid = arr3[1];
+
+      len=length(arr2);
+      offset_hobject=arr2[len]             # rb.0.1293.6b8b4567.000000000002__head_FB425CD3__2
+      split(offset_hobject, offarr1, "."); # {rb, 0, 1293, 6b8b4567, 000000000002__head_FB425CD3__2}
+      len1=length(offarr1) 
+      offset_p=offarr1[len1]               # 000000000002__head_FB425CD3__2
+      split(offset_p, offarr2, "__");      # {000000000002, head_FB425CD3, 2}
+      offset=offarr2[1];                   # 000000000002
+
+      system("echo -n \""node" "pgid" "hobject" "offset" \" >>"tmp_image);
+      
+      # find pg_epoch from pg_coll database
+      system("awk  \"\\$1 == \\\""node"\\\" && \\$2 == \\\""pgid"\\\" {print \\$3}\" "pg_coll" >>"tmp_image);
+  }'
+
+  local sort_image=$offset_dir_temp/sortimage
+  >$sort_image
+  sort -t ' ' -k 4.1,4 -k 5.1nr -k 1.1,1 $tmp_image >$sort_image
+  sort -t ' ' -k 4.1,4 -u $sort_image > $image_hobjects_stable
+  
+  #rm -rf $offset_dir_temp
+}
+
+# select the max pg_epoch item of the same $field
+# format : "node $field pg_epoch"
+function choose_epoch()
+{
+  cat $1|sort -t ' ' -k 3.1,4.1nr|head -n 1;
+}
+
+# lookup image info , after scatter_node_jobs & gather_node_infos
+function lookup_image()
+{
+  local func="lookup_image"
+  if [ "$1"x = ""x ];then
+    echo "$func: no image name input"
+    exit
+  fi
+  input_image $1
+  local node=
+  local item=/tmp/item.$$$$
+  local image_metadata=$images_meta/$image_name_in
+  local img_name=`dump_backslash $image_name`
+
+  local image_format=0
+  local image_id_hobject=
+  local image_header_hobject=
+  local result=/tmp/tmp_result.$$$$
+  local res1=/tmp/tmp_res1.$$$$
+  local res2=/tmp/tmp_res2.$$$$
+
+  # image format v1
+  {
+    cat $image_coll_v1|grep -E "/$img_name\.rbd__" >$res1
+    if [ -s $res1 ];then
+      echo -n "$func: rbd_header_hobject = "
+      choose_epoch $res1| tee $item
+      #choose_epoch $res1 > $item
+      
+      if [ -e $item ];then
+        node=`cat $item|awk '{print $1}'`
+        image_header_hobject=`cat $item|awk '{print $2}'`
+        if [ "$node"x = ""x ];then
+    	  echo "$func: v1 node is NULL"
+ 	  exit
+	fi
+	if [ "$image_header_hobject"x = ""x ];then
+	  echo "$func: v1 image_header_hobject is NULL"
+	  exit
+  	fi
+        rm -f $item
+      fi
+      
+      #check_osd_process $node
+
+      image_format=1
+      echo -e "image_name:\t$image_name_in"
+      echo -e "image_format:\t$image_format"
+ 
+      >$result
+      cmds="bash $job_path/osd_job do_image_metadata_v1 `dump_backslash $image_header_hobject`" 
+      ssh $ssh_option $node $cmds | tee $result
+    fi
+  }
+
+  # image format v2
+  {
+    cat $image_coll_v2|grep -E "/rbd\\\\uid\."$img_name"__" >$res2
+    if [ -s $res2 ];then
+      #echo -n "$func: rbd_id = "
+      #choose_epoch $res2 | tee $item
+      choose_epoch $res2 > $item
+
+      if [ -e $item ];then
+        node=`cat $item|awk '{print $1}'`
+        image_id_hobject=`cat $item|awk '{print $2}'`
+        if [ "$node"x = ""x ];then
+    	  echo "$func: v2 node is NULL(to get image_id_hobject)"
+ 	  exit
+	fi
+	if [ "$image_id_hobject"x = ""x ];then
+	  echo "$func: v2 image_id_hobject is NULL"
+	  exit
+  	fi
+        rm -f $item
+      fi
+
+      check_osd_process $node
+      image_format=2
+      
+      local tid=/tmp/image_id.$$$$
+      >$tid
+      cmds="bash $job_path/osd_job do_image_id `dump_backslash $image_id_hobject`" 
+      ssh $ssh_option $node $cmds > $tid
+
+      local image_id=`cat $tid`
+      rm -f $tid
+
+      #get image_header_hobject
+      pushd $database >/dev/null
+      local pattern="header."$image_id"__head"
+      local tcoll=/tmp/tmp_image_head_coll.$$$$
+      local t_item=/tmp/tmp_item.$$$$
+
+      grep -r $pattern * >$tcoll
+      cat $tcoll |sed -n 's/\(.*\):\(.*\)\/\([0-9a-fA-F]\+\.[0-9a-fA-F]\+\)_head\/.*/\1 \3/p' \
+      | xargs -n 1 -I @ grep @ $pg_coll >$t_item;
+      
+      node=`choose_epoch $t_item|awk '{print $1}'`
+      image_header_hobject=`cat $tcoll|awk -F ":" /$node/'{print $2}'`
+      if [ "$node"x = ""x ];then
+        echo "$func: v2 node is NULL (to get image_header_hobject)"
+        exit
+      fi
+      if [ "$image_id_hobject"x = ""x ];then
+        echo "$func: v2 image_header_hobject is NULL"
+        exit
+      fi
+      rm -f $t_item
+      rm -f $tcoll
+      popd >/dev/null
+
+      check_osd_process $node
+     
+      echo "$func: rbd_header_hobject = $image_header_hobject"
+      echo -e "image_name:\t$image_name_in"
+      echo -e "image_format:\t$image_format"
+
+      >$result
+      cmds="bash $job_path/osd_job do_image_metadata_v2 $image_id `dump_backslash $image_header_hobject`" 
+      ssh $ssh_option $node $cmds | tee $result
+    fi
+  }
+
+  if [ ! -s $result ];then
+    echo "$func: $image_name_in not exists" 
+    exit
+  fi
+  
+  # to assign value to global variable : image_prefix
+  db_image_prefix=`cat $result|awk '/^(object_prefix|block_name):/{print $2}'`
+  if [ "$db_image_prefix"x = ""x ];then
+    echo "$func: image_prefix is NULL"
+    exit
+  fi
+
+  db_image_size=`cat $result|awk '/^image_size:/{print $2}'`
+  db_order=`cat $result|awk '/^order:/{print $2}'`
+  found=1
+  rm -f $result
+}
+
+function list_images()
+{
+   echo "================ v1: ================"
+   sed -n 's/\(.*\)\/\(.*\)\.rbd__\(.*\)/\2/p' $image_coll_v1|sort -u|sed -e 's/\\u/_/g'
+   #cat /var/rbd_image/image_coll_v2|head -n 1|awk '{print $2}'|awk -F "current" '{print $1"current/"}'|wc -c
+   echo "================ v2: ================"
+   sed -n 's/\(.*\)\/rbd\\uid.\(.*\)__\(head.*\)/\2/p' $image_coll_v2|sort -u|sed 's/\\u/_/g'
+}
+
+# -------------------
+
+function discover_image_nosnap()
+{
+  local func="discover_image_nosnap"
+  lookup_image $1 # assign $image_prefix
+  #echo "$func: image_prefix=$db_image_prefix"
+  gather_hobject_nosnap $db_image_prefix 
+  local image_hobjects_nosnap_stable=$images/$db_image_prefix
+  mv $image_hobjects_nosnap_stable $images/$image_name_in
+}
+
+# after discove_image_nosnap
+# collect objects from osds one by one in sequence
+function copy_image_nosnap_single_thread()
+{
+  local func="copy_image_nosnap_single_thread"
+  if [ "$1"x = ""x ];then
+    echo "$func: image_hobjects file not input" 
+    exit
+  fi
+  local image_hobjects=$1
+  local backup_dir=$default_backup_dir
+
+  if [ "$2"x != ""x ];then
+    backup_dir=$2
+  fi 
+
+  # make sure lookup_image first
+  if [ $found = 0 ];then
+    echo "$func: image not found, maybe forget to discover_image"
+    exit
+  fi
+  mkdir -p $backup_dir
+
+  local image_file=$backup_dir/$image_name_in
+  >$image_file
+  truncate -s $db_image_size $image_file 
+
+  local count=$(($db_image_size >> $db_order))
+  local start=`cat $image_hobjects|head -n 1|awk '{print $4}'`
+  local end=`cat $image_hobjects|tail -n 1|awk '{print $4}'`
+  local entry_count=`cat $image_hobjects|wc -l`
+
+  local char_bits=$((`echo $start|wc -c` -1 ))
+  local format="%0"$char_bits"x"
+  
+  local expect_start=`printf $format 0`
+  local expect_end=`printf $format $(($count -1 ))`  
+
+  echo -e "object_count\t$entry_count"
+  echo -e "expect\t\t[$expect_start ~ $expect_end] count:$count"
+  echo -e "range\t\t[$start ~ $end] count:$entry_count"
+
+  local icount=0
+  local istart=
+  local iend=
+  local percent=
+  
+  local unit=$((1<<$db_order))
+  while read line
+  do
+  {
+    icount=$(($icount+1))
+    node=`echo $line|awk '{print $1}'` 
+    hobject=`echo $line|awk '{print $3}'` 
+    offset=`echo $line|awk '{print $4}'`
+    off=$((16#$offset))
+    if [ $icount = 1 ];then
+      istart=$offset
+    fi
+    hobject=`dump_backslash $hobject`
+    iend=$offset
+    sshcmd="cat $hobject"
+    ssh $ssh_option $node $sshcmd < /dev/null | dd of=$image_file bs=$unit seek=$off conv=notrunc 2>/dev/null
+    percent=`echo "scale=3; 100*$icount/$entry_count"|bc`
+    tput sc  #record current cursor
+    echo -n -e "complete\t[$istart ~ $iend] $icount/$entry_count ==> "$percent"%"
+    if [ $icount != $entry_count ];then
+      tput rc # backport most recent cursor
+    fi
+  }
+  done < $image_hobjects
+
+  echo
+  echo -n "size: "
+  ls -lh $image_file|awk '{print  $5"\t"$9}'
+  echo -n "du:   "
+  du -h $image_file
+}
+
+function recover_image()
+{
+  discover_image_nosnap $1 #input image_name 
+  local image_hobjects=$images/$image_name_in
+  copy_image_nosnap_single_thread $image_hobjects $2
+}

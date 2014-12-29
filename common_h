@@ -1,0 +1,261 @@
+#!/bin/bash
+# file: common_h
+# author: min chen(minchen@ubuntukylin.com) 2014
+
+my_dir=$(dirname "$0")
+
+#for admin center
+rbd_image=/var/rbd_image
+database=$rbd_image/database
+crc_database=$rbd_image/crc_database
+image_coll_v1=$rbd_image/image_coll_v1
+image_coll_v2=$rbd_image/image_coll_v2
+pg_coll=$rbd_image/pg_coll
+images=$rbd_image/images
+images_crc=$rbd_image/images_crc
+images_meta=$rbd_image/images_meta
+default_backup_dir=/var/default_backup_dir
+
+#for both admin & osd
+job_path=/var/osd_job
+
+#for single osd node
+single_node=/var/single_node
+node_pg_epoch=$single_node/node_pg_epoch
+omap_list=$single_node/omap_list 
+image_v1=/tmp/image_v1
+image_v2=/tmp/image_v2
+
+# init vars
+env=$my_dir/env # use must specify osd_data_dir in file env , eg. echo /var/lib/ceph/osd > env
+osd_data_dir= #/var/lib/ceph/osd
+osd_data= #/var/lib/ceph/osd/ceph-$i
+omap_path= #$osd_data/current/omap
+osd_host=$my_dir/osd_host
+
+# ssh option
+ssh_option="-o ConnectTimeout=1"
+
+# all osds must have the same osd_data_dir/osd_data, if not , we can't continue 
+# this function must run on an osd node
+function init_env_osd()
+{
+  local func="init_env_osd"
+  if [ ! -s $env ];then
+    echo "$func: env not exists or not input"
+    exit
+  fi
+  osd_data_dir=`cat $env|head -n 1| awk '{print $1}'`
+  if [ "$osd_data_dir"x = ""x ];then
+    echo "$func: osd_data_dir not input"
+    exit
+  fi
+
+  osd_data=`find $osd_data_dir -maxdepth 2 -name 'whoami'|xargs -n 1 dirname`
+  if [ "$osd_data"x = ""x ];then
+    echo "$func: $osd_data not exists on osd" 
+    exit
+  fi
+  omap_path=$osd_data/current/omap
+
+  mkdir -p $single_node
+}
+
+function init_env_admin()
+{
+  local func="init_env_admin" 
+  if [ ! -s $env ];then
+    echo "$func: env not exists or no input"
+    exit
+  fi
+  osd_data_dir=`cat $env|head -n 1| awk '{print $1}'`
+  if [ "$osd_data_dir"x = ""x ];then
+    echo "$func: osd_data_dir not input"
+    exit
+  fi
+  
+  mkdir -p $rbd_image
+  mkdir -p $images
+  mkdir -p $images_crc
+  mkdir -p $images_meta
+}
+
+#this function called on admin node
+function get_osd_data_remote()
+{
+  if [ "$1"x = ""x ];then
+    #echo "$func: no osd host input"
+    exit
+  fi
+ 
+  local host=$1
+  local cmd="find $osd_data_dir -maxdepth 2 -name 'whoami'|xargs -n 1 dirname;"
+  ssh $ssh_option $host $cmd 
+}
+
+function get_omap_list()
+{
+  ceph-kvstore-tool $omap_path list > $omap_list
+}
+
+function convert_underline()
+{
+  if [ "$1"x = ""x ];then
+    return
+  fi
+
+  echo $1|sed -e 's/_/\\u/gp'|head -n 1
+}
+
+function dump_backslash()
+{
+  echo $*|sed -e 's/\\/\\\\/gp'|head -n 1
+}
+
+function dump_dump_backslash()
+{
+  echo $*|sed -e 's/\\/\\\\\\\\/gp'|head -n 1
+}
+
+function char_convert()
+{
+  if [ "$1"x = ""x ];then
+    return
+  fi
+
+  echo $1|sed -e 's/_/\\u/gp' -e 's/\./%e/gp' -e 's/%/%p/gp'|head -n 1
+}
+
+function check_osd_process()
+{
+  local func="check_osd_process"
+  local host=$1
+  if [ "$1"x = ""x ];then
+    exit
+  fi
+  local cmds="ps aux|grep ceph-osd|grep -v grep"
+  local ret=/tmp/ret.$$$$
+  ssh $ssh_option $host $cmds |tee $ret
+  if [ -s $ret ];then
+    echo "$func: [$host] ceph-osd process is not killed"
+    exit
+  fi
+  rm -f $ret 
+}
+
+function get_map_header_prefix()
+{
+  echo "_HOBJTOSEQ_"
+}
+
+function get_map_header_key()
+{
+  local func="get_map_header_key"
+  if [ "$1"x = ""x ];then
+    #echo $func': no keyword input'
+    exit 
+  fi 
+  local keyword=$1
+  local res=`cat $omap_list| grep $keyword`
+  if [ "$res"x = ""x ];then
+    #echo "$func: map_header_key = $keyword not exisits"
+    exit
+  fi
+  echo $res|awk -F ":" '{print $2}'
+}
+
+function get_header_seq() 
+{
+  local func="get_header_seq"
+  if [ "$1"x == ""x ];then
+    #echo "$func: no prefix input"
+    exit;
+  elif [ "$2"x == ""x ];then
+    #echo "$func: no key input"
+    exit;
+  fi
+  local prefix=$1;
+  local key=$2;
+  local res=/tmp/header_seq.$$$$
+
+  ceph-kvstore-tool $omap_path get $prefix $key 2>/dev/null 1>$res
+  if [ $? != 0 ]; then
+    #echo "$func: <$prefix , $key> not exists" ;
+    exit;
+  fi
+
+  # ceph-kvstore-tool get result like this:
+  # 02 01 7e 00 00 00 12 44 00 00 00 00 00 00 00 00
+  # get header seq bytes: 
+  # 12 44 00 00 00 00 00 00 
+  # -> 00 00 00 00 00 00 44 12 
+  # echo $((16#0000000000004412)) -> 17426 == header_seq
+  local seq=`cat $res |head -n 2|tail -n 1| \
+  awk '
+  BEGIN {
+    FS=":"
+    seq="";
+    i=7;
+  } {
+    split($2, arr, " ")  
+    # header_seq uint64 : 8 bytes
+    for (x=7; x>=0; --x) {
+      seq=seq""arr[i+x];
+   }
+  }
+  END {
+   print seq
+  }'`
+  if [ "$seq"x = ""x ];then
+    #echo "$func: get <$prefix , $key> failed"
+    exit;
+  fi
+  rm -f $res
+  echo $((16#$seq))
+}
+
+# get header info key/value
+function get_header_kv()
+{
+  local func="get_header_kv"
+  if [ "$1"x = ""x ];then
+    #echo "$func: no prefix input"
+    exit
+  elif [ "$2"x = ""x ];then
+    #echo "$func: no key input"
+    exit
+  elif [ "$3"x != "string"x ] && [ "$3"x != "int"x ];then
+    #echo "$func: no valid type input, use type (string|int)"
+    exit
+  fi
+
+  local prefix=$1
+  local key=$2
+  local types=$3
+  local res=/tmp/kv.$$$$
+
+  ceph-kvstore-tool $omap_path get $prefix $key 2>/dev/null 1>$res
+  if [ $? != 0 ];then
+    #echo "$func: <$prefix , $key> not exists" 
+    exit
+  fi
+
+  if [ "$types"x = "string"x ];then
+    local value=`cat $res |tail -n +2|head -n -1|awk -F ": " '{printf $3}'|sed -n 's/^\.\{4\}//p'`
+    echo $value
+  elif [ "$types"x = "int"x ];then
+    local value=`cat $res |tail -n +2|head -n -1| \
+      awk '
+        BEGIN{
+          FS=":"
+        } {
+          split($2, arr, " ");
+          len=length(arr)
+          for (i=len; i>0; --i) { 
+                printf arr[i];
+          }
+        }'`
+    echo $((16#$value))
+  fi
+  rm -f $res
+}

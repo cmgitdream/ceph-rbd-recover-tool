@@ -1,0 +1,187 @@
+#!/bin/bash
+# file: admin_job
+# rbd offline recovery tool
+# author: min chen(minchen@ubuntukylin.com) 2014
+
+. common_h
+. metadata_h
+. epoch_h
+. database_h
+
+#scp files from admin node to osd node
+file1=common_h
+file2=metadata_h
+file3=epoch_h
+file4=osd_job
+file5=env
+
+#------------ admin node's action -------------
+
+function scp_file()
+{
+  local func="scp_file"
+  file=$1
+  if [ "$1"x = ""x ];then
+    echo "$func: not file input"
+    exit
+  fi
+  for host in `cat $osd_host`
+  do
+  {
+    echo "$func: $host"
+    scp $ssh_option $file $host:$job_path  1>/dev/null
+  } &
+  done
+}
+
+function scp_files()
+{
+  local func="scp_files"
+  for host in `cat $osd_host`
+  do
+  {
+    echo "$func: $host"
+    scp $ssh_option $file1 $host:$job_path
+    scp $ssh_option $file2 $host:$job_path
+    scp $ssh_option $file3 $host:$job_path
+    scp $ssh_option $file4 $host:$job_path
+    scp $ssh_option $file5 $host:$job_path
+  } &
+  done
+  wait
+  echo "$func: finish"
+}
+
+function scatter_node_jobs()
+{
+  local func="scatter_node_jobs"
+  echo "$func: start"
+  for host in `cat $osd_host` 
+  do
+  {
+    echo "$func: $host"
+    check_osd_process $host
+
+    cmd="mkdir -p $job_path"
+    ssh $ssh_option $host $cmd
+    scp $ssh_option $file1 $host:$job_path  >/dev/null
+    scp $ssh_option $file2 $host:$job_path  >/dev/null
+    scp $ssh_option $file3 $host:$job_path  >/dev/null
+    scp $ssh_option $file4 $host:$job_path  >/dev/null
+    scp $ssh_option $file5 $host:$job_path  >/dev/null
+    #echo "$func: scp_files to $host finish" 
+      
+    cmd1="bash $job_path/osd_job do_omap_list"
+    cmd2="bash $job_path/osd_job do_pg_epoch"
+    cmd3="bash $job_path/osd_job do_image_list"
+    cmds="$cmd1; $cmd2; $cmd3"
+    ssh $ssh_option $host $cmds
+  } &
+  done
+  wait
+  echo "$func: finish"
+}
+
+function gather_node_infos()
+{
+  local func="gather_node_infos"
+  echo "$func: start"
+  >$pg_coll
+  >$image_coll_v1
+  >$image_coll_v2
+  for host in `cat $osd_host`
+  do
+  {
+    echo "$func: $host"
+    check_osd_process $host
+
+    #pg epoch
+    cmd="cat $node_pg_epoch"
+    ssh $ssh_option $host $cmd >> $pg_coll
+    #image v1
+    cmd1="cat $image_v1" 
+    ssh $ssh_option $host $cmd1 >> $image_coll_v1
+    #image v2
+    cmd2="cat $image_v2" 
+    ssh $ssh_option $host $cmd2 >> $image_coll_v2
+  } &
+  done
+  wait
+  echo "$func: finish"
+}
+
+function scatter_gather()
+{
+  local func="scatter_gather"
+  if [ ! -s $osd_host ];then
+    echo "$func: no osd_host input"
+    exit
+  fi
+  if [ ! -s $mon_host ];then
+    echo "$func: no mon_host input"
+    exit
+  fi
+  scatter_node_jobs
+  gather_node_infos
+}
+
+
+#------------- operations --------------
+
+function database()
+{
+  scatter_gather
+  gen_database
+}
+
+function list()
+{
+  list_images
+}
+
+function lookup()
+{
+  lookup_image $1
+}
+
+function recover()
+{
+  recover_image $1 $2
+}
+
+#------------- helper -------------
+function usage()
+{
+  echo "./admin_job database"
+  echo "./admin_job list"
+  echo "./admin_job lookup <image_name>"
+  echo "./admin_job recover <image_name>"
+}
+
+function admin_cmd()
+{
+  if [ $# -lt 1 ];then
+    usage
+    exit
+  fi
+  if [ "$1"x = "-h"x ] || [ "$1"x = "--help"x ];then
+    usage
+    exit
+  fi
+  
+  if [ "$1"x = "database"x ];then
+    database
+  elif [ "$1"x = "list"x ];then
+    list
+  elif [ "$1"x = "lookup"x ] && [ $# = 2 ];then
+    lookup $2
+  elif [ "$1"x = "recover"x ] && [ $# = 2 ];then
+    recover $2
+  else
+    echo "command not found"
+  fi
+}
+
+init_env_admin
+admin_cmd $*
+
