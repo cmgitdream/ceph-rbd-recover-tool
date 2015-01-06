@@ -3,17 +3,18 @@
 # rbd offline recovery tool
 # author: min chen(minchen@ubuntukylin.com) 2014
 
-. common_h
-. metadata_h
-. epoch_h
-. database_h
+my_dir=$(dirname "$0")
+
+. $my_dir/common_h
+. $my_dir/metadata_h
+. $my_dir/epoch_h
+. $my_dir/database_h
 
 #scp files from admin node to osd node
 file1=common_h
 file2=metadata_h
 file3=epoch_h
 file4=osd_job
-file5=env
 
 #------------ admin node's action -------------
 
@@ -45,7 +46,6 @@ function scp_files()
     scp $ssh_option $file2 $host:$job_path
     scp $ssh_option $file3 $host:$job_path
     scp $ssh_option $file4 $host:$job_path
-    scp $ssh_option $file5 $host:$job_path
   } &
   done
   wait
@@ -55,11 +55,14 @@ function scp_files()
 function scatter_node_jobs()
 {
   local func="scatter_node_jobs"
-  echo "$func: start"
-  for host in `cat $osd_host` 
+  local host=
+  local data_path=
+  echo "$func ..."
+  while read line
   do
   {
-    echo "$func: $host"
+    host=`echo $line|awk '{print $1}'`
+    data_path=`echo $line|awk '{print $2}'`
     check_osd_process $host
 
     cmd="mkdir -p $job_path"
@@ -68,16 +71,15 @@ function scatter_node_jobs()
     scp $ssh_option $file2 $host:$job_path  >/dev/null
     scp $ssh_option $file3 $host:$job_path  >/dev/null
     scp $ssh_option $file4 $host:$job_path  >/dev/null
-    scp $ssh_option $file5 $host:$job_path  >/dev/null
-    #echo "$func: scp_files to $host finish" 
       
-    cmd1="bash $job_path/osd_job do_omap_list"
-    cmd2="bash $job_path/osd_job do_pg_epoch"
-    cmd3="bash $job_path/osd_job do_image_list"
-    cmds="$cmd1; $cmd2; $cmd3"
-    ssh $ssh_option $host $cmds
+    cmd1="bash $job_path/osd_job set_env_osd $data_path"
+    cmd2="bash $job_path/osd_job do_omap_list"
+    cmd3="bash $job_path/osd_job do_pg_epoch"
+    cmd4="bash $job_path/osd_job do_image_list"
+    cmds="$cmd1; $cmd2; $cmd3; $cmd4"
+    ssh $ssh_option $host $cmds </dev/null
   } &
-  done
+  done < $osd_host_path
   wait
   echo "$func: finish"
 }
@@ -85,7 +87,7 @@ function scatter_node_jobs()
 function gather_node_infos()
 {
   local func="gather_node_infos"
-  echo "$func: start"
+  echo "$func ..."
   >$pg_coll
   >$image_coll_v1
   >$image_coll_v2
@@ -152,14 +154,30 @@ function recover()
 #------------- helper -------------
 function usage()
 {
-  echo "./admin_job database"
-  echo "./admin_job list"
-  echo "./admin_job lookup <image_name>"
-  echo "./admin_job recover <image_name>"
+  local cmd_name="./admin_job"
+  echo "$cmd_name database"
+  echo "$cmd_name list"
+  echo "$cmd_name lookup <image_name>"
+  echo "$cmd_name recover <image_name> [</path/to/store/image>]"
+}
+
+function get_path()
+{
+  local func="get_path"
+  if [ "$1"x = ""x ];then
+    exit
+  fi
+  if [[ $1 =~ // ]];then
+    exit # "/path//to" is invalid
+  fi
+  local parent=`dirname $1`
+  local name=`basename $1`
+  echo -n "$parent/$name"
 }
 
 function admin_cmd()
 {
+  local func="admin_cmd"
   if [ $# -lt 1 ];then
     usage
     exit
@@ -168,17 +186,56 @@ function admin_cmd()
     usage
     exit
   fi
+
+  for i in $*
+  do
+    echo -n "$i "
+  done
+  echo
   
   if [ "$1"x = "database"x ];then
+    if [ $# -gt 1 ];then
+      usage
+      exit
+    fi
     database
   elif [ "$1"x = "list"x ];then
+    if [ $# -gt 1 ];then
+      usage
+      exit
+    fi
     list
-  elif [ "$1"x = "lookup"x ] && [ $# = 2 ];then
+  elif [ "$1"x = "lookup"x ];then
+    if [ $# -gt 2 ];then
+      usage
+      exit
+    fi
     lookup $2
-  elif [ "$1"x = "recover"x ] && [ $# = 2 ];then
-    recover $2
+  elif [ "$1"x = "recover"x ];then
+    if [ $# = 2 ];then
+      recover $2
+    elif [ $# = 3 ];then
+      local path=`get_path $3`
+      if [ "$path"x = ""x ];then
+  	echo "$func: $3 invalid"
+	exit
+      fi
+      recover $2 $path
+    else
+      usage
+    fi
+  elif [ "$1"x = "scp_files"x ];then
+    if [ $# -gt 1 ];then
+      exit
+    fi
+    scp_files
+  elif [ "$1"x = "scp_file"x ];then
+    if [ $# -gt 2 ];then
+      exit
+    fi
+    scp_file $2
   else
-    echo "command not found"
+    echo "$func: command not found"
   fi
 }
 

@@ -1,10 +1,12 @@
 #!/bin/bash
 # file: database_h
-# author: min chen(minchen@ubuntukylin.com) 2014
+# author: min chen(minchen@ubuntukylin.com) 2014 2015
 
-. common_h
-. metadata_h
-. epoch_h
+my_dir=$(dirname "$0")
+
+. $my_dir/common_h
+. $my_dir/metadata_h
+. $my_dir/epoch_h
 
 db_image_prefix=
 db_image_size=
@@ -17,16 +19,21 @@ function gen_database()
   local func="gen_database"
   rm -rf $database/*
   mkdir -p $database
-  for host in `cat $osd_host`
+  #for host in `cat $osd_host`
+  local host=
+  local data_path=
+  while read line
   do
     {
-      echo "$func: $host"
-      local osd_data=`get_osd_data_remote $host`
-      local cmds="find $osd_data/current -type f"
+      host=`echo $line|awk '{print $1}'`
+      data_path=`echo $line|awk '{print $2}'`
+      if [ "$host"x = ""x ] || [ "$data_path"x = ""x ];then
+ 	continue
+      fi
+      local cmds="find $data_path/current -type f"
       ssh $ssh_option $host $cmds > $database/$host
     } &
-    
-  done
+  done < $osd_host_path
   wait
   echo "$func: finish"
 }

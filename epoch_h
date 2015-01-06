@@ -1,6 +1,6 @@
 #!/bin/bash
 # file: epoch_h
-# author: min chen(minchen@ubuntukylin.com) 2014
+# author: min chen(minchen@ubuntukylin.com) 2014 2015
 
 my_dir=$(dirname "$0")
 . $my_dir/common_h

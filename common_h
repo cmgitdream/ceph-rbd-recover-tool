@@ -4,95 +4,119 @@
 
 my_dir=$(dirname "$0")
 
-#for admin center
+# admin node init path
 rbd_image=/var/rbd_image
 database=$rbd_image/database
-crc_database=$rbd_image/crc_database
 image_coll_v1=$rbd_image/image_coll_v1
 image_coll_v2=$rbd_image/image_coll_v2
 pg_coll=$rbd_image/pg_coll
 images=$rbd_image/images
-images_crc=$rbd_image/images_crc
 images_meta=$rbd_image/images_meta
 default_backup_dir=/var/default_backup_dir
 
-#for both admin & osd
+# osd node init path
 job_path=/var/osd_job
+osd_env=$my_dir/osd_env
 
-#for single osd node
-single_node=/var/single_node
-node_pg_epoch=$single_node/node_pg_epoch
-omap_list=$single_node/omap_list 
-image_v1=/tmp/image_v1
-image_v2=/tmp/image_v2
-
-# init vars
-env=$my_dir/env # use must specify osd_data_dir in file env , eg. echo /var/lib/ceph/osd > env
-osd_data_dir= #/var/lib/ceph/osd
-osd_data= #/var/lib/ceph/osd/ceph-$i
+# osd node path vars
+osd_data= #/var/lib/ceph/osd/$cluster-$id
 omap_path= #$osd_data/current/omap
-osd_host=$my_dir/osd_host
+single_node=/var/single_node
+image_v1= #$single_node/$cluster-$id/image_v1
+image_v2= #$single_node/$cluster-$id/image_v2
+node_pg_epoch= #$single_node/$cluster-$id/node_pg_epoch
+omap_list= #$single_node/$cluster-$id/omap_list 
+
+# admin node config file
+osd_host_path=$my_dir/config/osd_host_path
+osd_host=$my_dir/config/osd_host
+mon_host=$my_dir/config/mon_host
+mds_host=$my_dir/config/mds_host
 
 # ssh option
 ssh_option="-o ConnectTimeout=1"
 
-# all osds must have the same osd_data_dir/osd_data, if not , we can't continue 
-# this function must run on an osd node
+# for osd node
 function init_env_osd()
 {
   local func="init_env_osd"
-  if [ ! -s $env ];then
-    echo "$func: env not exists or not input"
-    exit
+  if [ ! -e $single_node ];then
+    mkdir -p $single_node
   fi
-  osd_data_dir=`cat $env|head -n 1| awk '{print $1}'`
-  if [ "$osd_data_dir"x = ""x ];then
-    echo "$func: osd_data_dir not input"
-    exit
+  # only after set_env_osd is called, osd_data & omap_path will be set
+  if [ -s $osd_env ];then
+      osd_data=`cat $osd_env|head -n 1|tr -d [:blank:]`
+      omap_path=$osd_data/current/omap
+      local cluster_id=`basename $osd_data`
+      mkdir -p $single_node/$cluster_id
+      image_v1=$single_node/$cluster_id/image_v1
+      image_v2=$single_node/$cluster_id/image_v2
+      node_pg_epoch=$single_node/$cluster_id/node_pg_epoch
+      omap_list=$single_node/$cluster_id/omap_list
   fi
-
-  osd_data=`find $osd_data_dir -maxdepth 2 -name 'whoami'|xargs -n 1 dirname`
-  if [ "$osd_data"x = ""x ];then
-    echo "$func: $osd_data not exists on osd" 
-    exit
-  fi
-  omap_path=$osd_data/current/omap
-
-  mkdir -p $single_node
 }
 
+# for admin node
 function init_env_admin()
 {
   local func="init_env_admin" 
-  if [ ! -s $env ];then
-    echo "$func: env not exists or no input"
+  if [ ! -s $osd_host_path ];then
+    echo "$func: osd_host_path not exists or empty"
     exit
   fi
-  osd_data_dir=`cat $env|head -n 1| awk '{print $1}'`
-  if [ "$osd_data_dir"x = ""x ];then
-    echo "$func: osd_data_dir not input"
+  if [ ! -e $rbd_image ];then
+    mkdir -p $rbd_image
+  fi
+  if [ ! -e $images ];then
+    mkdir -p $images
+  fi
+  if [ ! -e $images_meta ];then
+    mkdir -p $images_meta
+  fi
+
+  if [ ! -s $mon_host ];then
+    echo "$func: mon_host not exists or empty"
     exit
   fi
-  
-  mkdir -p $rbd_image
-  mkdir -p $images
-  mkdir -p $images_crc
-  mkdir -p $images_meta
+  if [ ! -e $mds_host ];then
+    echo "$func: mds_host not exists"
+    exit
+  fi
+  # we just tell if osd_host is filled
+  if [ -s $osd_host ];then
+    return  
+  fi
+  # create file: osd_host
+  >$osd_host
+  local lines=0
+  local lineno=0
+  while read line
+  do
+    lineno=$(($lineno + 1))
+    if [ "$line"x = ""x ];then
+      continue;
+    fi
+    local node=`echo $line|awk '{print $1}'`
+    if [ "$node"x = ""x ];then
+      echo "$func: osd_host_path : line $lineno: osd_host not input"
+      exit
+    fi
+    local data_path=`echo $line|awk '{print $2}'`
+    if [ "$data_path"x = ""x ];then
+      echo "$func: osd_host_path : line $lineno: osd_data not input"
+      exit
+    fi
+    lines=$(($lines + 1))
+    echo $node >> $osd_host
+  done < $osd_host_path
+
+  if [ $lines = 0 ];then
+    echo "$func: no osd host path valid"
+    exit
+  fi
 }
 
-#this function called on admin node
-function get_osd_data_remote()
-{
-  if [ "$1"x = ""x ];then
-    #echo "$func: no osd host input"
-    exit
-  fi
- 
-  local host=$1
-  local cmd="find $osd_data_dir -maxdepth 2 -name 'whoami'|xargs -n 1 dirname;"
-  ssh $ssh_option $host $cmd 
-}
-
+# for osd node
 function get_omap_list()
 {
   ceph-kvstore-tool $omap_path list > $omap_list

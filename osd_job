@@ -1,6 +1,6 @@
 #!/bin/bash
 # file: osd_job
-# author: min chen(minchen@ubuntukylin.com) 2014
+# author: min chen(minchen@ubuntukylin.com) 2014 2015
 
 my_dir=$(dirname "$0")
 
@@ -101,6 +101,22 @@ function do_image_metadata_v2()
   get_meta_header_seq $map_header_prefix $map_header_key
   #echo "$func: meta_headaer_seq = $meta_header_seq"
   get_image_metadata_v2 $meta_header_seq
+}
+
+# osd node set osd data path
+function set_env_osd()
+{
+  local func="set_env_osd"
+  if [ "$1"x = ""x ];then
+    echo "$func: no osd data path input"
+    exit
+  fi
+  osd_data=$1
+  if [ ! -e $osd_data ];then
+    echo "$func: osd data path not exists"
+    exit
+  fi
+  echo $osd_data > $osd_env 
 }
 
 check_ceph_osd

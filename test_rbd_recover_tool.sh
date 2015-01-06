@@ -12,7 +12,7 @@ ssh_opt="-o ConnectTimeout=1"
 my_dir=$(dirname "$0")
 tool_dir=$my_dir
 
-init_test=$my_dir/init_test
+storage_path=$my_dir/storage_path
 mon_host=$my_dir/mon_host
 osd_host=$my_dir/osd_host
 mds_host=$my_dir/mds_host
@@ -21,25 +21,25 @@ test_dir=
 export_dir=
 recover_dir=
 image_names=
-online_images=
-gen_db=
+online_images= #all images on ceph rbd pool
+gen_db= #label database if exist
 
 function init()
 {
   local func="init"
-  if [ ! -s $init_test ];then
-    echo "$func: test_dir path not input, make sure the disk enough space"
+  if [ ! -s $storage_path ];then
+    echo "$func: storage_path not input, make sure the disk enough space"
     exit
   fi    
   if [ ! -s $mon_host ];then
-    echo "$func: mon hosts not input"
+    echo "$func: mon_host not exists or empty"
     exit
   fi
-  if [ ! -s $osd_host ];then
-    echo "$func: osd hosts not input"
+  if [ ! -e $mds_host ];then
+    echo "$func: mds_host not exists"
     exit
   fi
-  test_dir=`cat $init_test`
+  test_dir=`cat $storage_path`
   export_dir=$test_dir/export
   recover_dir=$test_dir/recover
   image_names=$test_dir/image_names
@@ -78,7 +78,6 @@ function read_image_names()
     fi
     echo -n "$name "
     echo $name >>$image_names
-    
   done 
   echo
 }
@@ -107,6 +106,8 @@ function do_gen_database()
 function recover_images()
 {
   local func="recover_images"
+  echo "$func: cat image_names ..."
+  cat $image_names;
   cat $image_names|xargs -n 1 -I @ bash $tool_dir/admin_job recover @ $recover_dir
 }
 
@@ -149,6 +150,10 @@ function stop_ceph()
   while read osd
   do
   {
+    osd=`echo $osd|tr -d [:blank:]`
+    if [ "$osd"x = ""x ];then
+      continue
+    fi
     #ssh $ssh_opt $osd "killall ceph-osd ceph-mon ceph-mds" </dev/null
     ssh $ssh_opt $osd "killall ceph-osd" </dev/null
   } &
@@ -186,7 +191,7 @@ function create_image()
   fi
 }
 
-#------------
+#------------ simple test case for v1 and v2 -------------
 function test_case()
 {
   local func="test_case"
@@ -198,7 +203,6 @@ function test_case()
   local N=1;
   local sizes=(256 512 1024) #MB
   
-
   echo "$func: umount rbd-fuse"
   umount $mnt
 
@@ -228,18 +232,18 @@ function test_case()
     local image_v2="image_v2_$id"
     size=${sizes[$i]}
     echo "fill $image_v1 ..."
-    dd conv=notrunc if=/dev/urandom of=/rbdfuse/$image_v1 bs=1M count=$size
+    dd conv=notrunc if=/dev/urandom of=$mnt/$image_v1 bs=1M count=$size
     echo "fill $image_v2 ..."
-    dd conv=notrunc if=/dev/urandom of=/rbdfuse/$image_v2 bs=1M count=$size
+    dd conv=notrunc if=/dev/urandom of=$mnt/$image_v2 bs=1M count=$size
   done 
 
-  sleep 1 # for safe writing...
+  sleep 2 # for safe writing...
 
   get_all_images_online
   echo ${images[*]}|xargs -n 1 echo |read_image_names
   
   export_images
-  
+
   stop_ceph 
   sleep 2
   check_ceph_service
