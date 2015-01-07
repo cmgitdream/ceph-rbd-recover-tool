@@ -24,8 +24,8 @@ function input_image()
 }
 
 #======================================== distinguish v1 or v2 ===================================  
-image_list_v1=/tmp/image_list_v1
-image_list_v2=/tmp/image_list_v2
+#image_list_v1=$single_node/$cluster-$id/image_list_v1
+#image_list_v2=$single_node/$cluster-$id/image_list_v2
 function get_image_list()
 {
   find $osd_data/current/ -type f|grep ".rbd__" >$image_list_v1

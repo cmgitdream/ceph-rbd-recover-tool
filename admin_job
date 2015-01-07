@@ -72,11 +72,11 @@ function scatter_node_jobs()
     scp $ssh_option $file3 $host:$job_path  >/dev/null
     scp $ssh_option $file4 $host:$job_path  >/dev/null
       
-    cmd1="bash $job_path/osd_job set_env_osd $data_path"
-    cmd2="bash $job_path/osd_job do_omap_list"
-    cmd3="bash $job_path/osd_job do_pg_epoch"
-    cmd4="bash $job_path/osd_job do_image_list"
-    cmds="$cmd1; $cmd2; $cmd3; $cmd4"
+#    cmd1="bash $job_path/osd_job set_env_osd $data_path"
+    cmd2="bash $job_path/osd_job do_omap_list $data_path"
+    cmd3="bash $job_path/osd_job do_pg_epoch $data_path"
+    cmd4="bash $job_path/osd_job do_image_list $data_path"
+    cmds="$cmd2; $cmd3; $cmd4"
     ssh $ssh_option $host $cmds </dev/null
   } &
   done < $osd_host_path
@@ -91,23 +91,26 @@ function gather_node_infos()
   >$pg_coll
   >$image_coll_v1
   >$image_coll_v2
-  for host in `cat $osd_host`
+  #for host in `cat $osd_host`
+  while read line
   do
   {
+    host=`echo $line|awk '{print $1}'`
+    data_path=`echo $line|awk '{print $2}'`
     echo "$func: $host"
     check_osd_process $host
 
     #pg epoch
-    cmd="cat $node_pg_epoch"
-    ssh $ssh_option $host $cmd >> $pg_coll
+    cmd1="bash $job_path/osd_job cat_pg_epoch $data_path"
+    ssh $ssh_option $host $cmd1 >> $pg_coll
     #image v1
-    cmd1="cat $image_v1" 
-    ssh $ssh_option $host $cmd1 >> $image_coll_v1
+    cmd2="bash $job_path/osd_job cat_image_v1 $data_path"
+    ssh $ssh_option $host $cmd2 >> $image_coll_v1
     #image v2
-    cmd2="cat $image_v2" 
-    ssh $ssh_option $host $cmd2 >> $image_coll_v2
+    cmd3="bash $job_path/osd_job cat_image_v2 $data_path"
+    ssh $ssh_option $host $cmd3 >> $image_coll_v2
   } &
-  done
+  done < $osd_host_path
   wait
   echo "$func: finish"
 }

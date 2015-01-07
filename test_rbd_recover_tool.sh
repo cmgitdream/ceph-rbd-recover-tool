@@ -12,10 +12,10 @@ ssh_opt="-o ConnectTimeout=1"
 my_dir=$(dirname "$0")
 tool_dir=$my_dir
 
-storage_path=$my_dir/storage_path
-mon_host=$my_dir/mon_host
-osd_host=$my_dir/osd_host
-mds_host=$my_dir/mds_host
+storage_path=$my_dir/config/storage_path
+mon_host=$my_dir/config/mon_host
+osd_host=$my_dir/config/osd_host
+mds_host=$my_dir/config/mds_host
 
 test_dir=
 export_dir=
@@ -201,7 +201,7 @@ function test_case()
   #defaul pool : rbd
   local pool=rbd
   local N=1;
-  local sizes=(256 512 1024) #MB
+  local sizes=(64 128 256 512 1024) #MB
   
   echo "$func: umount rbd-fuse"
   umount $mnt

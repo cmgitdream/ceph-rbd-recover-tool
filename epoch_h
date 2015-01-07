@@ -6,10 +6,12 @@ my_dir=$(dirname "$0")
 . $my_dir/common_h
 # 1. get pg epoch of an osd
 
-pgid_list=/tmp/pgid_list.$$$$
+#pgid_list=$single_node/$cluster-$id/pgid_list
 function get_pgid_list()
 {
-  find $osd_data/current/ -type d -name "*_head"|sed -n 's/\(.*\)\/\([0-9a-fA-F]\+\.[0-9a-fA-F]\+\)_head/\2/p'|sort -n > $pgid_list
+  find $osd_data/current/ -type d -name "*_head"|\
+	sed -n 's/\(.*\)\/current\/\([0-9a-fA-F]\+\.[0-9a-fA-F]\+\)_head/\2 \1/p'|\
+	sort -t ' ' -k 1.1,1h -k 2.1,2 > $pgid_list;
 }
 
 function get_pgid()
