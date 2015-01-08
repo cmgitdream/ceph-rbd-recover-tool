@@ -1,6 +1,6 @@
 #!/bin/bash
 # file: common_h
-# author: min chen(minchen@ubuntukylin.com) 2014
+# author: min chen(minchen@ubuntukylin.com) 2014 2015
 
 my_dir=$(dirname "$0")
 
@@ -133,7 +133,7 @@ function init_env_admin()
     # in case : there are servral hostnames on the same node
     # just need output of `hostname`
     local node_replica=
-    node_replica=`ssh $ssh_option $node "hostname" 2>/dev/null`
+    node_replica=`ssh $ssh_option $node "hostname" 2>/dev/null </dev/null`
     if [ "$node_replica"x = ""x ];then
       echo "$func: get remote hostname replica failed"
       exit
@@ -148,9 +148,44 @@ function init_env_admin()
   fi
 }
 
+function admin_parse_osd()
+{
+  local func="admin_parse_osd"
+  if [ -s $osd_host ];then
+    return  
+  fi
+  # create file: osd_host
+  >$osd_host
+  local lines=0
+  local lineno=0
+  while read line
+  do
+    lineno=$(($lineno + 1))
+    if [ "$line"x = ""x ];then
+      continue;
+    fi
+    local node=`echo $line|awk '{print $1}'`
+    if [ "$node"x = ""x ];then
+      echo "$func: osd_host_path : line $lineno: osd_host not input"
+      exit
+    fi
+    local data_path=`echo $line|awk '{print $2}'`
+    if [ "$data_path"x = ""x ];then
+      echo "$func: osd_host_path : line $lineno: osd_data not input"
+      exit
+    fi
+    lines=$(($lines + 1))
+    echo $node >> $osd_host
+  done < $osd_host_path
+}
+
 # for osd node
 function get_omap_list()
 {
+  # clear lock if exist
+  if [ -e $omap_path/LOCK ];then
+    mv $omap_path/LOCK $omap_path/LOCK~
+  fi
   ceph-kvstore-tool $omap_path list > $omap_list
 }
 

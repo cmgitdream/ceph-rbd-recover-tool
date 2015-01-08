@@ -1,8 +1,10 @@
 #!/bin/bash
-# author: min chen(minchen@ubuntukylin.com) 2014
+# author: min chen(minchen@ubuntukylin.com) 2014 2015
 
 # unit test case for image with nosnap
 
+#prepare:
+# - write config files: config/osd_host, config/mon_host, config/storage_path, config/mds_host if exist mds
 #step 1. rbd export all images as you need
 #step 2. stop all ceph services
 #step 3. use rbd_recover_tool to recover all images
@@ -17,12 +19,12 @@ mon_host=$my_dir/config/mon_host
 osd_host=$my_dir/config/osd_host
 mds_host=$my_dir/config/mds_host
 
-test_dir=
-export_dir=
-recover_dir=
-image_names=
-online_images= #all images on ceph rbd pool
-gen_db= #label database if exist
+test_dir= # `cat $storage_path`
+export_dir= #$test_dir/export
+recover_dir= #$test_dir/recover
+image_names= #$test_dir/image_names
+online_images= #$test_dir/online_images, all images on ceph rbd pool
+gen_db= #$test_dir/gen_db, label database if exist
 
 function init()
 {
@@ -31,6 +33,10 @@ function init()
     echo "$func: storage_path not input, make sure the disk enough space"
     exit
   fi    
+  if [ ! -s $osd_host ];then
+    echo "$func: osd_host not exists or empty"
+    exit
+  fi
   if [ ! -s $mon_host ];then
     echo "$func: mon_host not exists or empty"
     exit
@@ -131,7 +137,7 @@ function check_md5sum()
   done 
 }
 
-#check if stop all ceph processes
+#check if all ceph processes are stopped
 function check_ceph_service()
 {
   local func="check_ceph_service"

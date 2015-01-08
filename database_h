@@ -95,7 +95,6 @@ function gather_hobject_nosnap()
 
       hobject=$2;
       data_path=arr1[1];
-#      print data_path
       gsub(/\\u/, "\\\\\\\\\\\\\\\\u", hobject); # dump backslash to delay escape (\ -> \\)
       "awk \"\\$1 == \\\""$1"\\\" {print \\$2}\" "osd_host_mapping" | head -n 1" | getline node
       #print "node="node
@@ -110,11 +109,9 @@ function gather_hobject_nosnap()
       offset=offarr2[1];                   # 000000000002
 
       system("echo -n \""node" "pgid" "hobject" "offset" \" >>"tmp_image);
-      #system("echo -n \""node" "pgid" "hobject" "offset" \"");
       
       # find pg_epoch from pg_coll database
       system("awk  \"\\$1 == \\\""node"\\\" && \\$2 == \\\""pgid"\\\" && \\$4 == \\\""data_path"\\\" {print \\$3}\" "pg_coll" >>"tmp_image);
-      #system("awk  \"\\$1 == \\\""node"\\\" && \\$2 == \\\""pgid"\\\" && \\$4 == \\\""data_path"\\\" {print \\$3}\" "pg_coll);
   }'
 
   local sort_image=$offset_dir_temp/sortimage
@@ -176,8 +173,6 @@ function lookup_image()
   	fi
         rm -f $item
       fi
-      
-      #check_osd_process $node
 
       image_format=1
       echo -e "image_name:\t$image_name_in"
@@ -197,8 +192,6 @@ function lookup_image()
       echo -n "$func: rbd_id = "
       choose_epoch $res2 | tee $item
       #choose_epoch $res2 > $item
-  
-      cat $item|awk '{print $1}'
 
       if [ -e $item ];then
         node=`cat $item|awk '{print $1}'`
@@ -257,7 +250,6 @@ function lookup_image()
         t_host_remote[$i]=`cat $t_hostname`	
       done
       rm -f $t_hostname
-
 
       local t_item=/tmp/tmp_item.$$$$
       local tmp_item=/tmp/tmp_tmp_item.$$$$

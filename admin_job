@@ -1,7 +1,7 @@
 #!/bin/bash
 # file: admin_job
 # rbd offline recovery tool
-# author: min chen(minchen@ubuntukylin.com) 2014
+# author: min chen(minchen@ubuntukylin.com) 2014 2015
 
 my_dir=$(dirname "$0")
 
@@ -72,11 +72,10 @@ function scatter_node_jobs()
     scp $ssh_option $file3 $host:$job_path  >/dev/null
     scp $ssh_option $file4 $host:$job_path  >/dev/null
       
-#    cmd1="bash $job_path/osd_job set_env_osd $data_path"
-    cmd2="bash $job_path/osd_job do_omap_list $data_path"
-    cmd3="bash $job_path/osd_job do_pg_epoch $data_path"
-    cmd4="bash $job_path/osd_job do_image_list $data_path"
-    cmds="$cmd2; $cmd3; $cmd4"
+    cmd1="bash $job_path/osd_job do_omap_list $data_path"
+    cmd2="bash $job_path/osd_job do_pg_epoch $data_path"
+    cmd3="bash $job_path/osd_job do_image_list $data_path"
+    cmds="$cmd1; $cmd2; $cmd3"
     ssh $ssh_option $host $cmds </dev/null
   } &
   done < $osd_host_path
@@ -189,59 +188,58 @@ function admin_cmd()
     usage
     exit
   fi
-
-  for i in $*
-  do
-    echo -n "$i "
-  done
-  echo
   
   if [ "$1"x = "database"x ];then
     if [ $# -gt 1 ];then
       usage
       exit
     fi
-    database
+    # remove osd_host to refresh osd_host and osd_host_mapping
+    rm -f $osd_host
   elif [ "$1"x = "list"x ];then
     if [ $# -gt 1 ];then
       usage
       exit
     fi
-    list
   elif [ "$1"x = "lookup"x ];then
     if [ $# -gt 2 ];then
       usage
       exit
     fi
-    lookup $2
   elif [ "$1"x = "recover"x ];then
-    if [ $# = 2 ];then
-      recover $2
-    elif [ $# = 3 ];then
-      local path=`get_path $3`
-      if [ "$path"x = ""x ];then
-  	echo "$func: $3 invalid"
-	exit
-      fi
-      recover $2 $path
-    else
+    if [ $# -lt 2 ] || [ $# -gt 3 ];then
       usage
+      exit
     fi
   elif [ "$1"x = "scp_files"x ];then
     if [ $# -gt 1 ];then
       exit
     fi
+    admin_parse_osd
     scp_files
+    exit
   elif [ "$1"x = "scp_file"x ];then
     if [ $# -gt 2 ];then
       exit
     fi
+    admin_parse_osd
     scp_file $2
+    exit
   else
-    echo "$func: command not found"
+    echo "$func: command $1 not found"
+    exit
   fi
+
+  init_env_admin
+  local image_path=$3
+  if [ "$3"x != ""x ];then
+    image_path=`get_path $3`
+    if [ "$image_path"x = ""x ];then
+      echo "$func: $3 invalid"
+      exit
+    fi
+  fi
+  eval "$1 $2 $image_path"
 }
 
-init_env_admin
 admin_cmd $*
-
