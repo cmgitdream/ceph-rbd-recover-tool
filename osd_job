@@ -52,9 +52,7 @@ function do_omap_list()
 {
   local func="do_omap_list"
   init_env_osd $1
-  #echo -e "$func:\t$hostname start"
   get_omap_list
-  #echo -e "$func:\t$hostname finish"
 }
 
 # get all pgs epoch 
@@ -62,11 +60,9 @@ function do_pg_epoch()
 {
   local func="do_pg_epoch"
   init_env_osd $1
-  #echo -e "$func:\t$hostname start"
   local node=`hostname`
   get_pgid_list
   >$node_pg_epoch
-  #for pgid in `cat $pgid_list`
   local pgid=
   local data_path=
   while read line
@@ -75,12 +71,9 @@ function do_pg_epoch()
     pgid=`echo $line|awk '{print $1}'`
     data_path=`echo $line|awk '{print $2}'`
     get_pg_epoch $pgid
-    #echo -e "$node\t$pgid\t$pg_epoch\t$data_path"
     echo -e "$node $pgid $pg_epoch $data_path" >>$node_pg_epoch
   } 
   done < $pgid_list
-  #rm -f $pgid_list
-  #echo -e "$func:\t$hostname finish"
 }
 
 # get an list of image in this osd node, pg epoch maybe not the latest, the admin node will do distinguish
@@ -88,26 +81,22 @@ function do_image_list()
 {
   local func="do_image_list"
   init_env_osd $1
-  #echo -e "$func:\t$hostname start"
   get_image_list   
   local node=`hostname`
   >$image_v1
   >$image_v2
   for line in `cat $image_list_v1`
   do
-    #echo "$func: v1  $line"
     pgid=`get_pgid $line`
     get_pg_epoch $pgid
     echo "$node $line $pg_epoch" >> $image_v1
   done
   for line in `cat $image_list_v2`
   do
-    #echo "$func: v2  $line"
     pgid=`get_pgid $line`
     get_pg_epoch $pgid
     echo "$node $line $pg_epoch" >> $image_v2
   done
-  #echo -e "$func:\t$hostname finish"
 }
 
 function do_image_id()
@@ -122,8 +111,8 @@ function do_image_metadata_v1()
   local func="do_image_metadata_v1"
   init_env_osd $1
   local image_header_hobject=$2
-  #echo "$func: $1"
-  get_image_metadata_v1 $image_header_hobject
+  local snap_name=$3
+  get_image_metadata_v1 $image_header_hobject $snap_name
 }
 
 function do_image_metadata_v2()
@@ -131,42 +120,12 @@ function do_image_metadata_v2()
   local func="do_image_metadata_v2"
   init_env_osd $1
   local image_id=$2
-  #echo "$func: image_id = $imag_id"
   local image_header_hobject=$3
+  local snap_name=$4
   get_map_header $image_id 
-  #echo "$func: map_headaer_prefix = $map_header_prefix"
-  #echo "$func: map_headaer_key = $map_header_key"
   get_meta_header_seq $map_header_prefix $map_header_key
-  #echo "$func: meta_headaer_seq = $meta_header_seq"
-  get_image_metadata_v2 $meta_header_seq
-}
-
-# osd node set osd data path
-function set_env_osd()
-{
-  local func="set_env_osd"
-  echo "$func ..."
-  if [ "$1"x = ""x ];then
-    echo "$func: no osd data path input"
-    exit
-  fi
-  osd_data=$1
-  if [ ! -e $osd_data ];then
-    echo "$func: osd data path not exists"
-    exit
-  fi
-  local cluster_id=`basename $osd_data`
-  echo "$func: cluster_id=$cluster_id"
-  local osd_dir=$single_node/$cluster_id
-  if [ ! -e $osd_dir ];then
-    mkdir -p $osd_dir
-  fi
-  osd_env=$osd_dir/osd_env
-  echo $osd_data >$osd_env 
-  echo "$func: sleep 1 ..."
-  sleep 1
+  get_image_metadata_v2 $meta_header_seq $snap_name
 }
 
 check_ceph_osd
-#init_env_osd
 $*

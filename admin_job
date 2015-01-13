@@ -145,12 +145,12 @@ function list()
 
 function lookup()
 {
-  lookup_image $1
+  lookup_image $1 $2
 }
 
 function recover()
 {
-  recover_image $1 $2
+  recover_image $1 $2 $3
 }
 
 #------------- helper -------------
@@ -159,22 +159,37 @@ function usage()
   local cmd_name="./admin_job"
   echo "$cmd_name database"
   echo "$cmd_name list"
-  echo "$cmd_name lookup <image_name>"
-  echo "$cmd_name recover <image_name> [</path/to/store/image>]"
+  echo "$cmd_name lookup  ( <image_name> | <image_name>@<snap_name> )"
+  echo "$cmd_name recover ( <image_name> | <image_name>@<snap_name> ) [</path/to/store/image>]
+	            rollback to image nosnap: <image_name>@
+	            rollback to image snap:   <image_name>@<snap_name>"
 }
 
 function get_path()
 {
   local func="get_path"
-  if [ "$1"x = ""x ];then
-    exit
+  if [ $# -lt 1 ];then
+    return
   fi
   if [[ $1 =~ // ]];then
-    exit # "/path//to" is invalid
+    return # "/path//to" is invalid
   fi
   local parent=`dirname $1`
   local name=`basename $1`
   echo -n "$parent/$name"
+}
+
+function split_string()
+{
+  local func="split_string"
+  if [ $# -lt 2 ];then
+    return
+  fi
+  local OIFS=$IFS
+  IFS=$2
+  local arr=($1) 
+  echo ${arr[*]}
+  IFS=$OIFS
 }
 
 function admin_cmd()
@@ -196,50 +211,95 @@ function admin_cmd()
     fi
     # remove osd_host to refresh osd_host and osd_host_mapping
     rm -f $osd_host
+    init_env_admin
+    database
   elif [ "$1"x = "list"x ];then
     if [ $# -gt 1 ];then
       usage
       exit
     fi
+    init_env_admin
+    list
   elif [ "$1"x = "lookup"x ];then
     if [ $# -gt 2 ];then
       usage
       exit
     fi
+    local image_name=
+    local snap_name=
+    if [[ $2 =~  (.*)@(.*) ]];then
+      local num=`echo $2|grep -o @|wc -l`
+      # only one "@"
+      if [ $num -ne 1 ];then
+    	echo "snap format: $2 is invalid, use <image_name>@<snap_name>"
+        exit
+      elif [ "${BASH_REMATCH[2]}"x = ""x ];then
+    	echo "snap format: $2 is invalid, format <image_name>@<snap_names> : <snap_name> can't be NULL"
+	exit
+      else
+	# split $2 into array by delimeter "@"
+        echo "split_string $2"
+	local arr=(`split_string $2 @`)
+	image_name=${arr[0]}
+	snap_name=${arr[1]}
+      fi
+    else
+      image_name=$2 
+    fi
+    init_env_admin
+    lookup $image_name $snap_name
   elif [ "$1"x = "recover"x ];then
     if [ $# -lt 2 ] || [ $# -gt 3 ];then
       usage
       exit
     fi
+    echo "$1 $2 $3"
+    local image_name=
+    local snap_name=@
+    local image_dir=
+    if [[ $2 =~  ^(.*)@(.*)$ ]];then
+      local num=`echo $2|grep -o @|wc -l`
+      # only one "@"
+      if [ $num -ne 1 ];then
+    	echo "snap format: $2 is invalid, use <image_name>@<snap_name>"
+        exit
+      elif [ "${BASH_REMATCH[2]}"x = ""x ];then
+    	echo "rollback to head image, if exists or will recover head image"
+        snap_name=@@
+      else
+	# split $2 into array by delimeter "@"
+  	echo "split_string $2"
+	local arr=(`split_string $2 @`)
+	image_name=${arr[0]}
+	snap_name=${arr[1]}
+      fi
+    else
+      image_name=$2 
+    fi
+    if [ $# = 3 ];then
+      image_dir=`get_path $3`
+      if [ "image_dir"x = ""x ];then
+        echo "$3 invalid"
+        exit
+      fi
+    fi
+    init_env_admin
+    recover $image_name $snap_name $image_dir
   elif [ "$1"x = "scp_files"x ];then
     if [ $# -gt 1 ];then
       exit
     fi
     admin_parse_osd
     scp_files
-    exit
   elif [ "$1"x = "scp_file"x ];then
     if [ $# -gt 2 ];then
       exit
     fi
     admin_parse_osd
     scp_file $2
-    exit
   else
     echo "$func: command $1 not found"
-    exit
   fi
-
-  init_env_admin
-  local image_path=$3
-  if [ "$3"x != ""x ];then
-    image_path=`get_path $3`
-    if [ "$image_path"x = ""x ];then
-      echo "$func: $3 invalid"
-      exit
-    fi
-  fi
-  eval "$1 $2 $image_path"
 }
 
 admin_cmd $*

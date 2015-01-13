@@ -14,6 +14,10 @@ images=$rbd_image/images
 images_meta=$rbd_image/images_meta
 default_backup_dir=/var/default_backup_dir
 
+# admin node: image snap & nosnap
+nosnap= #$rbd_image/<image_name>/nosnap
+snap= #rbd_image/<image_name>/<snap_name>
+
 # osd node init path
 job_path=/var/osd_job
 single_node=/var/single_node
