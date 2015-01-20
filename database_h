@@ -53,7 +53,8 @@ function gather_hobject_common()
   fi
 
   local image_prefix=$1
-  local snap_id=
+  # NOSNAP = uint64(-2)
+  local snap_id=`printf "%u" -2`
   local hex_snap_id="head"
   local psuffix=
   local fsuffix="_head"
@@ -104,6 +105,7 @@ function gather_hobject_common()
     pg_coll="'$pg_coll'"
     tmp_image="'$tmp_image'"
     osd_host_mapping="'$osd_host_mapping'"
+    snapid="'$snap_id'"
   }{ 
       # $2 = /var/lib/ceph/osd/ceph-1/current/2.d3_head/rb.0.1293.6b8b4567.000000000002__head_FB425CD3__2
 
@@ -125,7 +127,7 @@ function gather_hobject_common()
       split(offset_p, offarr2, "__");      # {000000000002, head_FB425CD3, 2}
       offset=offarr2[1];                   # 000000000002
 
-      system("echo -n \""node" "pgid" "hobject" "offset" \" >>"tmp_image);
+      system("echo -n \""node" "pgid" "hobject" "offset" "snapid" \" >>"tmp_image);
       
       # find pg_epoch from pg_coll database
       system("awk  \"\\$1 == \\\""node"\\\" && \\$2 == \\\""pgid"\\\" && \\$4 == \\\""data_path"\\\" {print \\$3}\" "pg_coll" >>"tmp_image);
@@ -133,7 +135,7 @@ function gather_hobject_common()
 
   local sort_image=$offset_dir_temp/sortimage.$$$$
   >$sort_image
-  sort -t ' ' -k 4.1,4 -k 5.1nr -k 1.1,1 $tmp_image >$sort_image
+  sort -t ' ' -k 4.1,4 -k 6.1nr -k 1.1,1 $tmp_image >$sort_image
   sort -t ' ' -k 4.1,4 -u $sort_image > $image_hobjects_stable
   
   #rm -rf $offset_dir_temp
@@ -412,7 +414,7 @@ function get_object_clone()
 {
   local func="get_object_clone"
   if [ $# -lt 4 ];then
-    echo "$func: parameters number error"
+    #echo "$func: parameters number error"
     exit
   fi
 
@@ -421,15 +423,14 @@ function get_object_clone()
   local snaplist_path=$3
   local snapset_output_dir=$4
 
+  # snapid in desc
   local snap_coll_arr=(`
-  cat $snaplist_path|awk '{ if ($1 >= "'"$snapid"'") print "'"$snapset_output_dir"'/@"$1}'`) 
+  cat $snaplist_path|awk '{ if ($1 >= '"$snapid"') print "'"$snapset_output_dir"'/@"$1}'`) 
 
   local hex_snapid=`printf "%x" $snapid`
   pushd $snapset_output_dir >/dev/null
-  # grep pattern need to fix
-  #grep -r -E "data.*__"$hex_snapid"_"  `echo ${snap_coll_arr[@]}`
-  echo $object_offset_string
-  awk '/'"$object_offset_string"'/{print}' `echo ${snap_coll_arr[@]}`
+  # get object with the smallest snapid -gt current specify snapid
+  awk '$4 == "'"$object_offset_string"'" && $5 >= '$snapid' {print}' `echo ${snap_coll_arr[@]}` |tail -n 1
   popd >/dev/null
 }
 
@@ -467,7 +468,6 @@ function gen_snapset_hobject()
 function discover_image_snap()
 {
   local func="discover_image_snap"
-  echo "$func ..."
 
   local snap_name=$2
   #mkdir -p $images/$image_prefix
@@ -484,9 +484,11 @@ function discover_image_snap()
     exit
   fi
   local image_hobject_dir=$images/$image_name_in
-  local image_snap=$image_hobject_dir/@snap_$db_snap_id
+  local image_snap_hobject=$image_hobject_dir/$image_name_in@$db_snap_id
+  local image_snap_hobject_head=$image_hobject_dir/$image_name_in@$db_snap_id@head
   local image_snaplist=$image_hobject_dir/@snaplist
   local image_snapset_dir=$image_hobject_dir/@snapset_dir
+  local image_head=$image_hobject_dir/$image_name_in
   if [ ! -e $image_hobject_dir ];then
     mkdir -p $image_hobject_dir
   fi
@@ -497,10 +499,22 @@ function discover_image_snap()
   fi
   rm -rf $images/$db_image_prefix
 
-  #get_object_clone 0 $db_snap_id $image_snaplist $image_snapset_dir
-  #get_object_clone 1 $db_snap_id $image_snaplist $image_snapset_dir
-  #get_object_clone 2 $db_snap_id $image_snaplist $image_snapset_dir
-  get_object_clone "0000000000000003" $db_snap_id $image_snaplist $image_snapset_dir
+  >$image_snap_hobject
+  >$image_snap_hobject_head
+  while read line
+  do
+    #echo $line
+    OOIFS=$IFS
+    IFS=$' '
+    local field=(`echo $line`)
+    local offset_string=${field[3]}
+    IFS=$OOIFS
+    local entry=`get_object_clone $offset_string $db_snap_id $image_snaplist $image_snapset_dir` # >> $image_snap_hobject
+    if [ "$entry"x != ""x ];then
+      echo $entry >> $image_snap_hobject
+      echo `dump_backslash $line` >> $image_snap_hobject_head
+    fi
+  done < $image_head
 }
 
 # after discover_image_nosnap
@@ -697,11 +711,12 @@ function collect_image_snap_objects()
     head_offset=${arr2[3]}
     head_filename=$head_dir/$head_offset
 
- #   echo "$snap_node $snap_filename    $head_node $head_filename"
-    #ssh $ssh_option $snap_node "cat $snap_hobject" > $snap_filename 
-    #if [ ! -e $head_filename ];then
-    #  ssh $ssh_option $head_node "cat $head_hobject" > $head_filename 
-    #fi
+    if [ ! -e $snap_filename ];then
+      ssh $ssh_option $snap_node "cat $snap_hobject" > $snap_filename 
+    fi
+    if [ ! -e $head_filename ];then
+      ssh $ssh_option $head_node "cat $head_hobject" > $head_filename 
+    fi
     IFS=$OOIFS
 
     percent=`echo "scale=3; 100*$icount/$entry_count"|bc`
@@ -719,8 +734,7 @@ function copy_image_snap_single_thread()
 {
   local func="collect_image_snap_objects"
   #image_name_in, db_snap_id
-  echo "num: $#"
-  if [ $# -lt 4 ];then
+  if [ $# -lt 5 ];then
     echo "$func: parameters number not correct" 
     exit
   fi
@@ -728,11 +742,9 @@ function copy_image_snap_single_thread()
   local snap_id=$2
   local snap_hobjects=$3
   local head_hobjects=$4
-  local backup_dir=$default_backup_dir
-  if [ "$5"x != ""x ];then
-    backup_dir=$4
-  fi
+  local backup_dir=$5
 
+  local CURRENT=$backup_dir/$image_name/@CURRENT
   local LOCK=$backup_dir/$image_name/@LOCK
   if [ -e $LOCK ];then
     echo "$func: $LOCK is locked by other process"
@@ -745,32 +757,96 @@ function copy_image_snap_single_thread()
   rm -f $LOCK
 }
 
+function rollback_image_snap()
+{
+  local func="rollback_image_snap"
+  
+  local image_name=$1
+  local snap_id=$2
+  local snap_object_dir=$3
+  local backup_dir=$4
+  local image_unit=$5
+
+  local image_path=$backup_dir/$image_name/$image_name
+  local CURRENT=$backup_dir/$image_name/@CURRENT
+  local LOCK=$backup_dir/$image_name/@LOCK
+  if [ -e $LOCK ];then
+    echo "$func: $LOCK is locked by other process"
+    exit
+  else
+    touch $LOCK
+  fi
+  if [ ! -e $snap_object_dir ];then
+    exit
+  fi
+  if [ $snap_id -ne -2 ];then
+    echo $snap_id > $CURRENT
+  else
+    echo "head" > $CURRENT
+  fi 
+
+  echo "$func ..."
+  pushd $snap_object_dir >/dev/null 
+  local objects=(`ls .`)
+  for object in ${objects[@]}
+  do
+    local offset=$((16#$object))
+    cat $object | dd of=$image_path bs=$image_unit seek=$offset conv=notrunc 2>/dev/null
+  done
+  popd >/dev/null
+  rm -f $LOCK
+  if [ $snap_id -ne -2 ];then
+    echo "$image_name rollback to snapid: $snap_id"
+  else
+    echo "$image_name rollback to head"
+  fi
+}
+
 function recover_image()
 {
   #$1=image_name, $2=snap_name, $3=backup_dir
   local func="recover_image"
+  #echo "$1 $2 $3"
   local img_name=$1
   local snap_name=
   if [ "$2"x != "@"x ];then
     snap_name=$2
   fi
-  local backup_dir=
+  local backup_dir=/var/default_backup_dir
   if [ "$3"x != ""x ];then
     backup_dir=$3
   fi
   echo "$func: $1 $2 $3"
-  if [ "$snap_name"x = ""x ];then
   #recover with nosnap
+  if [ "$snap_name"x = ""x ];then
     echo "func: discover_image_nosnap"
     discover_image_nosnap $img_name #input image_name 
     local image_hobjects=$images/$image_name_in/$image_name_in
     copy_image_nosnap_single_thread $image_hobjects $backup_dir
-  else
   #recover with snap
-    discover_image_snap $img_name $snap_name # get image meta
-    #local snap_hobjects=$images/$image_name_in/@snap_$db_snap_id
-    #local head_hobjects=$images/$image_name_in/$image_name_in
+  else
+    # rollback to head
+    if [ "$snap_name"x = "@@"x ];then
+      local head_dir=$backup_dir/$img_name/@head
+      local img_path=$backup_dir/$img_name/$img_name
+      if [ ! -e $img_path ];then
+	echo "$func: img_name : can't rollback to head, and recover nosnap first"
+      elif [ -e $head_dir ];then
+	local unit=`pushd $head_dir >/dev/null; ls|head -n 1|xargs -n 1 stat|awk '/Size:/{print $2}'`
+        rollback_image_snap $img_name -2 $backup_dir/$img_name/@head $backup_dir $unit
+      else
+	echo "$func: no need to rollback to head"
+      fi
+      return 0
+    fi
     
-    #copy_image_snap_single_thread $image_name_in $db_snap_id $snap_hobjects $head_hobjects $backup_dir
+    discover_image_snap $img_name $snap_name # get image meta
+    local snap_hobjects=$images/$image_name_in/$image_name_in@$db_snap_id
+    local head_hobjects=$images/$image_name_in/$image_name_in@$db_snap_id@head
+    local snap_object_dir=$backup_dir/$image_name_in/@$db_snap_id
+    local image_path=$backup_dir/$image_name_in/$image_name_in
+    local image_unit=$((1<<$db_order))
+    copy_image_snap_single_thread $image_name_in $db_snap_id $snap_hobjects $head_hobjects $backup_dir
+    rollback_image_snap $image_name_in $db_snap_id $snap_object_dir $backup_dir $image_unit 
   fi
 }

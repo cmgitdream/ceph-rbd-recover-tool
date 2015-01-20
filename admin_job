@@ -253,7 +253,7 @@ function admin_cmd()
       usage
       exit
     fi
-    echo "$1 $2 $3"
+    #echo "$1 $2 $3"
     local image_name=
     local snap_name=@
     local image_dir=
@@ -263,15 +263,15 @@ function admin_cmd()
       if [ $num -ne 1 ];then
     	echo "snap format: $2 is invalid, use <image_name>@<snap_name>"
         exit
-      elif [ "${BASH_REMATCH[2]}"x = ""x ];then
-    	echo "rollback to head image, if exists or will recover head image"
-        snap_name=@@
       else
 	# split $2 into array by delimeter "@"
-  	echo "split_string $2"
 	local arr=(`split_string $2 @`)
 	image_name=${arr[0]}
 	snap_name=${arr[1]}
+        if [ "${BASH_REMATCH[2]}"x = ""x ];then
+    	  #echo "rollback to head image..."
+	  snap_name=@@
+	fi
       fi
     else
       image_name=$2 
