@@ -48,6 +48,25 @@ function cat_image_v2()
   fi
 } 
 
+function flush_osd_journal()
+{
+  local func="flush_osd_journal"
+  init_env_osd $1
+  local osd_data_path=$osd_data
+  local osd_journal_path=$osd_data/journal 
+  local whoami_path=$osd_data/whoami
+  if [ ! -e $whoami_path ];then
+    echo "$func: $whoami_path not exists"
+    exit
+  fi
+  local whoami=`cat $whoami_path`
+  ceph-osd -i $whoami --osd-data $osd_data_path --osd-journal $osd_journal_path --flush-journal >/dev/null
+  if [ $? -ne 0 ];then
+    echo "$func: flush osd journal failed"
+    exit
+  fi
+}
+
 function do_omap_list()
 {
   local func="do_omap_list"

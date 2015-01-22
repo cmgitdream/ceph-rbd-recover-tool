@@ -72,11 +72,11 @@ function scatter_node_jobs()
     scp $ssh_option $file3 $host:$job_path  >/dev/null
     scp $ssh_option $file4 $host:$job_path  >/dev/null
       
-    cmd1="bash $job_path/osd_job do_omap_list $data_path"
-    cmd2="bash $job_path/osd_job do_pg_epoch $data_path"
-    cmd3="bash $job_path/osd_job do_image_list $data_path"
-    cmds="$cmd1; $cmd2; $cmd3"
-    ssh $ssh_option $host $cmds </dev/null
+    cmd="bash $job_path/osd_job flush_osd_journal $data_path"
+    cmd="$cmd; bash $job_path/osd_job do_omap_list $data_path"
+    cmd="$cmd; bash $job_path/osd_job do_pg_epoch $data_path"
+    cmd="$cmd; bash $job_path/osd_job do_image_list $data_path"
+    ssh $ssh_option $host $cmd </dev/null
   } &
   done < $osd_host_path
   wait
