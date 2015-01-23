@@ -82,7 +82,8 @@ function gather_hobject_common()
   fi
 
   pushd $database >/dev/null
-  local pattern=".*__"$hex_snap_id"_.*"
+  #local pattern=".*__"$hex_snap_id"_"
+  local  pattern="\.[0-9a-f]+__"$hex_snap_id"_[0-9A-F]{8}__[0-9a-f]+$"
   >$image_hobjects_raw
   grep -r -E $dump_image_prefix""$pattern * >$image_hobjects_raw
   if [ "`cat $image_hobjects_raw`"x = ""x ];then
@@ -451,6 +452,7 @@ function gen_snapset_hobject()
   OIFS=$IFS
   IFS=$'\n'
   local snaparr=(`cat $snaplist_path`) 
+  # gather hobject for each snapshot
   for line in ${snaparr[@]}
   do
     OOIFS=$IFS
@@ -460,6 +462,7 @@ function gen_snapset_hobject()
     local image_hobjects_stable_snap=$images/$image_prefix/$image_prefix"_"$snapid
     local image_snap=$snapset_output_dir/@$snapid
     gather_hobject_snap $image_prefix $snapid 
+  # node1 pgid1 
     if [ $? -ne 0 ];then
       touch $image_snap
     else 
@@ -622,21 +625,26 @@ function copy_image_nosnap_single_thread()
 }
 
 
-#ssh copy snap_object & head_object from osd to admin node
+# ssh copy snap_object & head_object from osd to admin node
+# copy all snapshot objects 
+# and 
+# all head objects which has the same offset with snapshot objects 
 function collect_image_snap_objects()
 {
+  local func="collect_image_snap_objects"
   #$1=backup_dir, $2=snap_name, $3=snap_hobjects, $4=head_hobjects
   if [ $# -lt 5 ];then
     exit
   fi  
-  echo "$func ..."
-  echo "$1 $2 $3 $4 $5"
 
   local image_name=$1
   local snap_id=$2
-  local snap_hobjects=$3
-  local head_hobjects=$4
+  local snap_hobjects=$3 #snap hobjects info
+  local head_hobjects=$4 #head hobjects info
   local backup_dir=$5
+
+  echo "$func : snapid = $2 ..."
+  #echo "$1 $2 $3 $4 $5"
 
   local head_dir=$backup_dir/$image_name/@head
   local snap_dir=$backup_dir/$image_name/@$snap_id
@@ -649,16 +657,17 @@ function collect_image_snap_objects()
     mkdir -p $snap_dir
   fi
 
-  # snap_hobjects and head_hobjects are sorted
-  local snap_node=
-  local snap_hobject=
+  local snap_node= #osd node
+  local snap_hobject= #hobject path with snapid on osd
   local snap_offset=
   local snap_filename=
+
   local head_node=
   local head_hobject=
   local head_offset=
   local head_filename=
 
+  # ignore if there is no object in snapshot(empty )
   if [ ! -s $snap_hobjects ];then
     echo "$func: $snap_hobjects is empty"
     return 0
@@ -671,10 +680,35 @@ function collect_image_snap_objects()
     return 1
   fi
 
+  # just assert if ignored empty snapshot
   if [ "$start"x = ""x ] || [ "$end"x = ""x ];then
     return 1
   fi
+ 
+  # speed up copy snapshot
+  # 
+  # eg.
+  # head hobjects: (32 objects)
+  # ceph1 29.4d /var/lib/ceph/osd/ceph-0/current/29.4d_head/rb.0.1c414.6b8b4567.000000000000__head_EC2C1C4D__1d 000000000000 18446744073709551614 869
+  # ceph1 29.8c /var/lib/ceph/osd/ceph-0/current/29.8c_head/rb.0.1c414.6b8b4567.000000000001__head_0F439A8C__1d 000000000001 18446744073709551614 867
+  # ceph1 29.6a /var/lib/ceph/osd/ceph-0/current/29.6a_head/rb.0.1c414.6b8b4567.000000000002__head_FC55706A__1d 000000000002 18446744073709551614 869
+  # ceph1 29.8b /var/lib/ceph/osd/ceph-0/current/29.8b_head/rb.0.1c414.6b8b4567.000000000003__head_20A6328B__1d 000000000003 18446744073709551614 869
+  # ceph2 29.75 /var/lib/ceph/osd/ceph-1/current/29.75_head/rb.0.1c414.6b8b4567.000000000004__head_AC5ADB75__1d 000000000004 18446744073709551614 867
+  # ceph2 29.23 /var/lib/ceph/osd/ceph-1/current/29.23_head/rb.0.1c414.6b8b4567.000000000005__head_1FDEA823__1d 000000000005 18446744073709551614 867
+  # ......
+  # ceph1 29.34 /var/lib/ceph/osd/ceph-0/current/29.34_head/rb.0.1c414.6b8b4567.00000000001f__head_52373734__1d 00000000001f 18446744073709551614 869
+  #
+  # snap hobjects: (3 objects, snapid = 29)
+  # ceph1 29.8c /var/lib/ceph/osd/ceph-0/current/29.8c_head/rb.0.1c414.6b8b4567.000000000001__1f_0F439A8C__1d 000000000001 29 867
+  # ceph1 29.6a /var/lib/ceph/osd/ceph-0/current/29.6a_head/rb.0.1c414.6b8b4567.000000000002__1e_FC55706A__1d 000000000002 29 869
+  # ceph1 29.8b /var/lib/ceph/osd/ceph-0/current/29.8b_head/rb.0.1c414.6b8b4567.000000000003__1d_20A6328B__1d 000000000003 29 869
+  #
+  # so just copy 
+
+
+  # get the line number of the start offset in head hobjects
   local n1=`grep -n $start $head_hobjects|head -n 1|cut -d ":" -f 1`
+  # get the line number of the end offset in head hobjects
   local n2=`grep -n $end $head_hobjects|head -n 1|cut -d ":" -f 1`
  
   local icount=0
@@ -689,6 +723,11 @@ function collect_image_snap_objects()
   local snap_arr=(`cat $snap_hobjects`)
   local snap_tmp=/tmp/snaptmp.$$$$
   
+
+  # snap_tmp: 
+  # consists of snap hobject or head hobject
+  # 
+  # select lineno range: [n1 ~ n2]
   head -n $n2 $head_hobjects|tail -n $(($n2-$n1+1)) >$snap_tmp 
 
   echo "copy image snap objects form osd ..."
@@ -713,6 +752,7 @@ function collect_image_snap_objects()
     iend=$snap_offset
 
     snap_filename=$snap_dir/$snap_offset
+    #select the max snapid [head or snapid]
     local res=`grep $snap_offset $snap_tmp|head -n 1` 
     if [ "$res"x = ""x ];then
       echo "$func: image object[ $snap_offset ] missing"
@@ -748,7 +788,7 @@ function collect_image_snap_objects()
 function copy_image_snap_single_thread()
 {
   local func="copy_image_snap_single_thread"
-  echo "$func ..."
+  #echo "$func ..."
   #image_name_in, db_snap_id
   if [ $# -lt 5 ];then
     echo "$func: parameters number not correct" 
@@ -784,7 +824,10 @@ function rollback_image_snap()
   local backup_dir=$4
   local image_unit=$5
 
+  local need_diff_set=0
+
   local image_path=$backup_dir/$image_name/$image_name
+  local head_object_dir=$backup_dir/$image_name/@head
   local CURRENT=$backup_dir/$image_name/@CURRENT
   local LOCK=$backup_dir/$image_name/@LOCK
   if [ -e $LOCK ];then
@@ -803,26 +846,109 @@ function rollback_image_snap()
     return 0
   fi
 
-  pushd $snap_object_dir >/dev/null 
-
-  local objects=(`ls .`)
-  local entry_count=${#objects[@]}  
-  local start=${objects[0]}
-  local end=
-  if [ $entry_count -ne 0 ];then
-    end=${objects[$(($entry_count - 1))]}
+  if [ "$snap_object_dir"x != "$head_object_dir"x ];then
+    echo "$func: need to compute diff_set of head"
+    need_diff_set=1
+  else
+    echo "$func: NO diff_set"
+    need_diff_set=0
   fi
+
+  local entry_count=0
+  local start=
+  local end=
   local offset=
-  
   local icount=0
   local istart=
   local iend=
   local percent=
 
+  local snap_objects=
+  local head_objects=
+  local diff_set=
+
+  snap_objects=(`ls $snap_object_dir`)
+
+  # if need to compute differeset of head_objects and snap_objects
+  if [ $need_diff_set -ne 0 ];then
+    head_objects=(`ls $head_object_dir`) 
+
+    #get the difference set: ( head_objects - snap_objects )
+    diff_set=(`
+    sort -m <(echo ${head_objects[@]}|xargs -n 1 echo) <(echo ${snap_objects[@]}|xargs -n 1 echo) \
+  	<(echo ${snap_objects[@]}|xargs -n 1 echo) |uniq -u`) 
+
+    # copy diff_set of head object to image
+    pushd $head_object_dir >/dev/null
+
+    echo "$func: copy diff_set ..."
+    entry_count=${#diff_set[@]}  
+    start=${diff_set[0]}
+    end=
+    if [ $entry_count -gt 0 ];then
+      end=${diff_set[$(($entry_count - 1))]}
+    fi
+    offset=
+    icount=0
+    istart=
+    iend=
+    percent=
+
+    echo -e "object_count\t$entry_count"
+    echo -e "range\t\t[$start ~ $end] count:$entry_count"
+
+    for object in ${diff_set[@]}
+    do
+      icount=$(($icount+1))
+      if [ $icount = 1 ];then
+        istart=$object
+      fi
+      iend=$object
+
+      local offset=$((16#$object))
+      dd if=$object of=$image_path bs=$image_unit seek=$offset conv=notrunc 2>/dev/null
+
+      percent=`echo "scale=3; 100*$icount/$entry_count"|bc`
+      tput sc  #record current cursor
+      echo -n -e "complete\t[$istart ~ $iend] $icount/$entry_count ==> "$percent"%"
+      if [ $icount != $entry_count ];then
+        tput rc # backport most recent cursor
+      fi
+    done
+    if [ $entry_count -gt 0 ];then
+      echo
+    fi
+    popd >/dev/null
+
+    if [ $snap_id -ne -2 ];then
+      echo -e "$image_name already rollback diff_set: (head - snap)"
+    fi
+  fi
+  
+  # copy snap object to image
+  pushd $snap_object_dir >/dev/null 
+
+  if [ $need_diff_set -ne 1 ];then
+    echo "$func: copy snap objects ..."
+  else
+    echo "$func: copy head objects ..."
+  fi
+  entry_count=${#snap_objects[@]}  
+  start=${snap_objects[0]}
+  end=
+  if [ $entry_count -gt 0 ];then
+    end=${snap_objects[$(($entry_count - 1))]}
+  fi
+  offset=
+  icount=0
+  istart=
+  iend=
+  percent=
+
   echo -e "object_count\t$entry_count"
   echo -e "range\t\t[$start ~ $end] count:$entry_count"
 
-  for object in ${objects[@]}
+  for object in ${snap_objects[@]}
   do
     icount=$(($icount+1))
     if [ $icount = 1 ];then
@@ -831,7 +957,7 @@ function rollback_image_snap()
     iend=$object
 
     local offset=$((16#$object))
-    cat $object | dd of=$image_path bs=$image_unit seek=$offset conv=notrunc 2>/dev/null
+    dd if=$object of=$image_path bs=$image_unit seek=$offset conv=notrunc 2>/dev/null
 
     percent=`echo "scale=3; 100*$icount/$entry_count"|bc`
     tput sc  #record current cursor
@@ -839,9 +965,12 @@ function rollback_image_snap()
     if [ $icount != $entry_count ];then
       tput rc # backport most recent cursor
     fi
-
   done
+  if [ $entry_count -gt 0 ];then
+    echo
+  fi
   popd >/dev/null
+
   rm -f $LOCK
   if [ $snap_id -ne -2 ];then
     echo "$image_name rollback to snapid: $snap_id"
@@ -865,7 +994,7 @@ function recover_image()
   if [ "$3"x != ""x ];then
     backup_dir=$3
   fi
-  echo "$func: $1 $2 $3"
+  #echo "$func: $1 $2 $3"
   #recover with nosnap
   if [ "$snap_name"x = ""x ];then
     discover_image_nosnap $img_name #input image_name 
@@ -883,12 +1012,14 @@ function recover_image()
 	local unit=`pushd $head_dir >/dev/null; ls|head -n 1|xargs -n 1 stat|awk '/Size:/{print $2}'`
         # rollback to head
         rollback_image_snap $img_name -2 $backup_dir/$img_name/@head $backup_dir $unit
+        echo "$image_name_in head : $backup_dir/$img_name/$img_name"
       else
 	echo "$func: no need to rollback to head"
       fi
       return 0
     fi
     
+    # rollback to snap
     discover_image_snap $img_name $snap_name # get image meta
     local snap_hobjects=$images/$image_name_in/$image_name_in@$db_snap_id
     local head_hobjects=$images/$image_name_in/$image_name_in@$db_snap_id@head
@@ -896,8 +1027,7 @@ function recover_image()
     local image_path=$backup_dir/$image_name_in/$image_name_in
     local image_unit=$((1<<$db_order))
     copy_image_snap_single_thread $image_name_in $db_snap_id $snap_hobjects $head_hobjects $backup_dir
-    #make sure the image rollback to head, first
-    rollback_image_snap $image_name_in -2 $backup_dir/$image_name_in/@head $backup_dir $image_unit
     rollback_image_snap $image_name_in $db_snap_id $snap_object_dir $backup_dir $image_unit 
+    echo "$image_name_in@$db_snap_id : $image_path"
   fi
 }
