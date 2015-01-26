@@ -8,9 +8,6 @@ my_dir=$(dirname "$0")
 . $my_dir/metadata_h
 . $my_dir/epoch_h
 
-hostname=`hostname`
-hostname="[$hostname]"
-
 function check_ceph_osd()
 {
   local func="check_ceph_osd"

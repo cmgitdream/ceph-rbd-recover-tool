@@ -154,14 +154,15 @@ function recover()
 }
 
 #------------- helper -------------
+
 function usage()
 {
   local cmd_name="./admin_job"
   echo "$cmd_name database"
   echo "$cmd_name list"
-  echo "$cmd_name lookup  ( <image_name> | <image_name>@<snap_name> )"
-  echo "$cmd_name recover ( <image_name> | <image_name>@<snap_name> ) [</path/to/store/image>]
-	            rollback to image nosnap: <image_name>@
+  echo "$cmd_name lookup  <pool_id>/<image_name>[@[<snap_name>]]"
+  echo "$cmd_name recover <pool_id>/<image_name>[@[<snap_name>]] [</path/to/store/image>]
+	            rollback to image head:   <image_name>@
 	            rollback to image snap:   <image_name>@<snap_name>"
 }
 
@@ -177,19 +178,6 @@ function get_path()
   local parent=`dirname $1`
   local name=`basename $1`
   echo -n "$parent/$name"
-}
-
-function split_string()
-{
-  local func="split_string"
-  if [ $# -lt 2 ];then
-    return
-  fi
-  local OIFS=$IFS
-  IFS=$2
-  local arr=($1) 
-  echo ${arr[*]}
-  IFS=$OIFS
 }
 
 function admin_cmd()
@@ -225,56 +213,45 @@ function admin_cmd()
       usage
       exit
     fi
+    local pool_id=-1
     local image_name=
     local snap_name=
-    if [[ $2 =~  (.*)@(.*) ]];then
-      local num=`echo $2|grep -o @|wc -l`
-      # only one "@"
-      if [ $num -ne 1 ];then
-    	echo "snap format: $2 is invalid, use <image_name>@<snap_name>"
-        exit
-      elif [ "${BASH_REMATCH[2]}"x = ""x ];then
-    	echo "snap format: $2 is invalid, format <image_name>@<snap_names> : <snap_name> can't be NULL"
-	exit
-      else
-	# split $2 into array by delimeter "@"
-        echo "split_string $2"
-	local arr=(`split_string $2 @`)
-	image_name=${arr[0]}
-	snap_name=${arr[1]}
-      fi
+    if [[ $2 =~  ^([^@/]+)/([^@/]+)$ ]];then
+      pool_id="${BASH_REMATCH[1]}"
+      image_name="${BASH_REMATCH[2]}"
+    elif [[ $2 =~  ^([^@/]+)/([^@/]+)@([^@/]*)$ ]];then
+      pool_id="${BASH_REMATCH[1]}"
+      image_name="${BASH_REMATCH[2]}"
+      snap_name="${BASH_REMATCH[3]}"
     else
-      image_name=$2 
+      echo "snap format: $2 is invalid, use <pool_id>/<image_name>[@[<snap_name>]]"
+      exit
     fi
     init_env_admin
-    lookup $image_name $snap_name
+    echo "$pool_id $image_name $snap_name"
+    lookup $pool_id $image_name $snap_name
   elif [ "$1"x = "recover"x ];then
     if [ $# -lt 2 ] || [ $# -gt 3 ];then
       usage
       exit
     fi
-    #echo "$1 $2 $3"
+    local pool_id=-1
     local image_name=
     local snap_name=@
     local image_dir=
-    if [[ $2 =~  ^(.*)@(.*)$ ]];then
-      local num=`echo $2|grep -o @|wc -l`
-      # only one "@"
-      if [ $num -ne 1 ];then
-    	echo "snap format: $2 is invalid, use <image_name>@<snap_name>"
-        exit
-      else
-	# split $2 into array by delimeter "@"
-	local arr=(`split_string $2 @`)
-	image_name=${arr[0]}
-	snap_name=${arr[1]}
-        if [ "${BASH_REMATCH[2]}"x = ""x ];then
-    	  #echo "rollback to head image..."
-	  snap_name=@@
-	fi
+    if [[ $2 =~  ^([^@/]+)/([^@/]+)$ ]];then
+      pool_id="${BASH_REMATCH[1]}"
+      image_name="${BASH_REMATCH[2]}"
+    elif [[ $2 =~  ^([^@/]+)/([^@/]+)@([^@/]*)$ ]];then
+      pool_id="${BASH_REMATCH[1]}"
+      image_name="${BASH_REMATCH[2]}"
+      snap_name="${BASH_REMATCH[3]}"
+      if [ "$snap_name"x = ""x ];then
+        snap_name=@@
       fi
     else
-      image_name=$2 
+      echo "snap format: $2 is invalid, use <pool_id>/<image_name>[@[<snap_name>]]"
+      exit
     fi
     if [ $# = 3 ];then
       image_dir=`get_path $3`
@@ -284,7 +261,7 @@ function admin_cmd()
       fi
     fi
     init_env_admin
-    recover $image_name $snap_name $image_dir
+    recover $pool_id $image_name $snap_name $image_dir
   elif [ "$1"x = "scp_files"x ];then
     if [ $# -gt 1 ];then
       exit
