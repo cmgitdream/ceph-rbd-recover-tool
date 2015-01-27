@@ -57,7 +57,7 @@ function scatter_node_jobs()
   local func="scatter_node_jobs"
   local host=
   local data_path=
-  echo "$func ..."
+  echo "$func: flush osd journal & generate infos: omap, pg, image ..."
   while read line
   do
   {
@@ -71,11 +71,12 @@ function scatter_node_jobs()
     scp $ssh_option $file2 $host:$job_path  >/dev/null
     scp $ssh_option $file3 $host:$job_path  >/dev/null
     scp $ssh_option $file4 $host:$job_path  >/dev/null
-      
-    cmd="bash $job_path/osd_job flush_osd_journal $data_path"
-    cmd="$cmd; bash $job_path/osd_job do_omap_list $data_path"
-    cmd="$cmd; bash $job_path/osd_job do_pg_epoch $data_path"
-    cmd="$cmd; bash $job_path/osd_job do_image_list $data_path"
+
+    cmd="bash $job_path/osd_job flush_osd_journal $data_path;"
+    cmd="$cmd $job_path/osd_job do_omap_list $data_path;"
+    cmd="$cmd bash $job_path/osd_job do_pg_epoch $data_path;"
+    cmd="$cmd bash $job_path/osd_job do_image_list $data_path;"
+
     ssh $ssh_option $host $cmd </dev/null
   } &
   done < $osd_host_path
@@ -145,7 +146,7 @@ function list()
 
 function lookup()
 {
-  lookup_image $1 $2
+  lookup_image $1 $2 $3
 }
 
 function recover()

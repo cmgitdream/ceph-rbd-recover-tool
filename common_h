@@ -97,9 +97,6 @@ function init_env_admin()
   if [ ! -e $images ];then
     mkdir -p $images
   fi
-  #if [ ! -e $images_meta ];then
-  #  mkdir -p $images_meta
-  #fi
 
   if [ ! -s $mon_host ];then
     echo "$func: mon_host not exists or empty"
@@ -110,7 +107,7 @@ function init_env_admin()
     exit
   fi
 
-  # we just tell if osd_host is filled
+  # we just judge if osd_host is filled
   if [ -s $osd_host ];then
     return  
   fi
@@ -138,13 +135,13 @@ function init_env_admin()
     lines=$(($lines + 1))
     # in case : there are servral hostnames on the same node
     # just need output of `hostname`
-    local node_replica=
-    node_replica=`ssh $ssh_option $node "hostname" 2>/dev/null </dev/null`
-    if [ "$node_replica"x = ""x ];then
+    local hostname_replica=
+    hostname_replica=`ssh $ssh_option $node "hostname" 2>/dev/null </dev/null`
+    if [ "$hostname_replica"x = ""x ];then
       echo "$func: get remote hostname replica failed"
       exit
     fi
-    echo "$node $node_replica" >>$osd_host_mapping
+    echo "$node $hostname_replica" >>$osd_host_mapping
     echo $node >> $osd_host
   done < $osd_host_path
 

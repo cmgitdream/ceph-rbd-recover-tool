@@ -20,6 +20,8 @@ function gen_database()
 {
   local func="gen_database"
   rm -rf $database/*
+  rm -rf $images
+  rm -rf $raw
   mkdir -p $database
   #for host in `cat $osd_host`
   local host=
@@ -46,7 +48,7 @@ function gen_database()
 function gather_hobject_common()
 {
   func="gather_hobject_common"
-  echo "$func ..."
+  #echo "$func: $1 $2 $3 "
   if [ $# -lt 2 ];then
     echo "$func: parameters: <pool_id> <image_prefix> [<snap_id>]"  
     exit
@@ -69,6 +71,7 @@ function gather_hobject_common()
   fi
   local underline_image_prefix=`convert_underline $image_prefix`
   local dump_image_prefix=`dump_backslash $underline_image_prefix`
+  local ddump_image_prefix=`dump_dump_backslash $underline_image_prefix`
   local images_raw_dir=$rbd_image/raw
   local image_hobjects_dir=$images/pool_$pool_id/$image_prefix
   # $images/raw/$image_prefix"_head"
@@ -76,7 +79,7 @@ function gather_hobject_common()
   # $images/$image_prefix/$image_prefix"_head"
   local image_hobjects_stable=$image_hobjects_dir/$image_prefix"$fsuffix"
 
-  if [ ! -e $image_raw_dir ];then
+  if [ ! -e $images_raw_dir ];then
     mkdir -p $images_raw_dir
   fi
   if [ ! -e $image_hobjects_dir ];then
@@ -88,7 +91,7 @@ function gather_hobject_common()
   local  pattern="\.[0-9a-f]+__"$hex_snap_id"_[0-9A-F]{8}__"$hex_pool_id
   >$image_hobjects_raw
   grep -r -E $dump_image_prefix""$pattern * >$image_hobjects_raw
-  if [ "`cat $image_hobjects_raw`"x = ""x ];then
+  if [ ! -s $image_hobjects_raw ];then
     echo "$func: image snap [ $image_prefix"$psuffix" ] is empty"
     return 1 #no data available
   fi
@@ -98,7 +101,7 @@ function gather_hobject_common()
   rm -rf $offset_dir_temp
   mkdir -p $offset_dir_temp
 
-  echo "gather hobjects from database ..."
+  echo "gather hobjects from database: snapid=$snap_id ..."
 
   # format: ceph2:/var/lib/ceph/osd/ceph-1/current/2.d3_head/rb.0.1293.6b8b4567.000000000002__head_FB425CD3__2
   local tmp_image=$offset_dir_temp/tmpimage.$$$$
@@ -471,7 +474,8 @@ function gen_snapset_hobject()
     local image_hobjects_stable_snap=$images/pool_$pool_id/$image_prefix/$image_prefix"_"$snapid
     local image_snap=$snapset_output_dir/@$snapid
     gather_hobject_snap $pool_id $image_prefix $snapid 
-    if [ $? -ne 0 ];then
+    local res=$?
+    if [ $res -ne 0 ];then
       touch $image_snap
     else 
       mv $image_hobjects_stable_snap $image_snap
@@ -752,7 +756,7 @@ function collect_image_snap_objects()
   # select lineno range: [n1 ~ n2]
   head -n $n2 $head_hobjects|tail -n $(($n2-$n1+1)) >$snap_tmp 
 
-  echo "copy image snap/head objects form osd ..."
+  echo "copy image snap/head objects from osd ..."
   echo -e "object_count\t$entry_count"
   echo -e "range\t\t[$start ~ $end] count:$entry_count"
 
@@ -1072,14 +1076,19 @@ function recover_image()
 
   #recover with snap
   else
-    # rollback to head
 
+    # check if recover head already
+    local img_hobjects_path=$images/pool_$pool_id/$img_name/$img_name
+    local img_file_path=$backup_dir/pool_$pool_id/$img_name/$img_name
+    if [ ! -e $img_hobjects_path ] || [ ! -e $img_file_path ];then
+      echo "$func: $img_name@$snap_name : can not rollback to snapshot, please recover image first"
+      exit
+    fi
+
+    # rollback to head
     if [ "$snap_name"x = "@@"x ];then
       local head_dir=$backup_dir/pool_$pool_id/$img_name/@head
-      local img_path=$backup_dir/pool_$pool_id/$img_name/$img_name
-      if [ ! -e $img_path ];then
-	echo "$func: img_name : can't rollback to head, and recover nosnap first"
-      elif [ -e $head_dir ];then
+      if [ -e $head_dir ];then
 	local unit=`pushd $head_dir >/dev/null; ls|head -n 1|xargs -n 1 stat|awk '/Size:/{print $2}'`
         # rollback to head
         rollback_image_snap $pool_id $img_name -2 $backup_dir/$img_name/@head $backup_dir $unit
@@ -1091,7 +1100,6 @@ function recover_image()
     fi
     
     # rollback to snap
-
     discover_image_snap $pool_id $img_name $snap_name # get image meta & get snapid object
     local snap_hobjects=$images/pool_$pool_id/$image_name_in/$image_name_in@$db_snap_id
     local head_hobjects=$images/pool_$pool_id/$image_name_in/$image_name_in@$db_snap_id@head
