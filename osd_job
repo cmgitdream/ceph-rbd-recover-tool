@@ -14,7 +14,7 @@ function check_ceph_osd()
   local host=`hostname`
   # if ceph-osd service is still running, except flush-journal
   if [ "`ps aux|grep ceph-osd|grep -v flush-journal|grep -v grep`"x != ""x ];then
-    echo "$func: [$host] ceph-osd is running..., stop it"
+    echo "[$host]: $func: ceph-osd is running..., stop it"
     exit 
   fi
 }
@@ -53,14 +53,16 @@ function flush_osd_journal()
   local osd_data_path=$osd_data
   local osd_journal_path=$osd_data/journal 
   local whoami_path=$osd_data/whoami
+  local host=`hostname`
   if [ ! -e $whoami_path ];then
-    echo "$func: $whoami_path not exists"
+    echo "[$host]: $func: $whoami_path not exists"
     exit
   fi
   local whoami=`cat $whoami_path`
+  echo "[$host]: $func ..."
   ceph-osd -i $whoami --osd-data $osd_data_path --osd-journal $osd_journal_path --flush-journal >/dev/null
   if [ $? -ne 0 ];then
-    echo "$func: flush osd journal failed"
+    echo "[$host]: $func: flush osd journal failed"
     exit
   fi
 }
@@ -69,6 +71,8 @@ function do_omap_list()
 {
   local func="do_omap_list"
   init_env_osd $1
+  local host=`hostname`
+  echo "[$host]: $func ..."
   get_omap_list
 }
 
@@ -82,6 +86,8 @@ function do_pg_epoch()
   >$node_pg_epoch
   local pgid=
   local data_path=
+  local host=`hostname`
+  echo "[$host]: $func ..."
   while read line
   do
   {
@@ -102,6 +108,8 @@ function do_image_list()
   local node=`hostname`
   >$image_v1
   >$image_v2
+  local host=`hostname`
+  echo "[$host]: $func ..."
   for line in `cat $image_list_v1`
   do
     pgid=`get_pgid $line`

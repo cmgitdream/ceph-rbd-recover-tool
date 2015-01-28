@@ -57,7 +57,7 @@ function scatter_node_jobs()
   local func="scatter_node_jobs"
   local host=
   local data_path=
-  echo "$func: flush osd journal & generate infos: omap, pg, image ..."
+  echo "$func: flush osd journal & generate infos: omap, pg, image metadata ..."
   while read line
   do
   {
