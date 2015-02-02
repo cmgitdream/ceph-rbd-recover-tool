@@ -151,7 +151,7 @@ function lookup()
 
 function recover()
 {
-  recover_image $1 $2 $3
+  recover_image $1 $2 $3 $4
 }
 
 #------------- helper -------------
@@ -178,7 +178,11 @@ function get_path()
   fi
   local parent=`dirname $1`
   local name=`basename $1`
-  echo -n "$parent/$name"
+  if [ "$parent"x = "/"x ];then
+    echo "$parent$name"
+  else
+    echo -n "$parent/$name"
+  fi
 }
 
 function admin_cmd()
@@ -254,6 +258,7 @@ function admin_cmd()
       echo "snap format: $2 is invalid, use <pool_id>/<image_name>[@[<snap_name>]]"
       exit
     fi
+    echo "dollar 3 = $3"
     if [ $# = 3 ];then
       image_dir=`get_path $3`
       if [ "image_dir"x = ""x ];then
@@ -262,6 +267,7 @@ function admin_cmd()
       fi
     fi
     init_env_admin
+    echo "$func: recover = $pool_id $image_name $snap_name $image_dir"
     recover $pool_id $image_name $snap_name $image_dir
   elif [ "$1"x = "scp_files"x ];then
     if [ $# -gt 1 ];then

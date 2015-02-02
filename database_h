@@ -1056,6 +1056,8 @@ function recover_image()
     exit
   fi
 
+  echo "$func: before = $1 $2 $3 $4"
+
   local pool_id=$1
   local img_name=$2
   local snap_name=$3
@@ -1067,6 +1069,8 @@ function recover_image()
   if [ "$backup_dir"x = ""x ];then
     backup_dir=/var/default_backup_dir
   fi
+
+  echo "$func: after = $pool_id $img_name $snap_name $backup_dir"
 
   #recover with nosnap
   if [ "$snap_name"x = ""x ];then
