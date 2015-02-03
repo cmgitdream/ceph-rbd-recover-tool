@@ -158,13 +158,35 @@ function recover()
 
 function usage()
 {
-  local cmd_name="./admin_job"
-  echo "$cmd_name database"
-  echo "$cmd_name list"
-  echo "$cmd_name lookup  <pool_id>/<image_name>[@[<snap_name>]]"
+  local cmd_name="rbd-recover-tool"
+  echo 
+  echo "$cmd_name is used to recover rbd image of replicated pool, 
+	when all ceph services are stopped"
+  echo "Usage:"
+  echo "$cmd_name database
+		 	gather pg info, object info, image metadata, 
+		 	and epoch info from all osd nodes,
+		    	this will cosume a long time, just be patient, 
+			especially when scale up to 1000+ osds"
+  echo "$cmd_name list
+		    	list all rbd images of all replicated pools, 
+			before to lookup & recover"
+  echo "$cmd_name lookup  <pool_id>/<image_name>[@[<snap_name>]]
+		    	show image metadata: image format, rbd id, size, order, snapseq
+			In addtion, for image with snapshots, 
+			this will list all snapshot infomations"
   echo "$cmd_name recover <pool_id>/<image_name>[@[<snap_name>]] [</path/to/store/image>]
-	            rollback to image head:   <image_name>@
-	            rollback to image snap:   <image_name>@<snap_name>"
+			all snapshots share one image head, to economize disk space
+			so there is only one snapshot at any time,
+			image is saved at </path/to/store/image>/pool_<pool_id>/image_name/image_name
+			cat <path/to/store/image>/pool_<pool_id>/image_name/@CURRENT,
+			will show snapid
+		    	recover to raw image/nosnap/head: <image_name>
+	            	rollback to image head:           <image_name>@
+	            	rollback to image snap:           <image_name>@<snap_name>
+			recover steps:
+			1. recover image nosnap (only one time)
+			2. rollback to image snap"
 }
 
 function get_path()
@@ -229,11 +251,10 @@ function admin_cmd()
       image_name="${BASH_REMATCH[2]}"
       snap_name="${BASH_REMATCH[3]}"
     else
-      echo "snap format: $2 is invalid, use <pool_id>/<image_name>[@[<snap_name>]]"
+      echo "format: $2 is invalid, use <pool_id>/<image_name>[@[<snap_name>]]"
       exit
     fi
     init_env_admin
-    echo "$pool_id $image_name $snap_name"
     lookup $pool_id $image_name $snap_name
   elif [ "$1"x = "recover"x ];then
     if [ $# -lt 2 ] || [ $# -gt 3 ];then
@@ -255,10 +276,9 @@ function admin_cmd()
         snap_name=@@
       fi
     else
-      echo "snap format: $2 is invalid, use <pool_id>/<image_name>[@[<snap_name>]]"
+      echo "format: $2 is invalid, use <pool_id>/<image_name>[@[<snap_name>]]"
       exit
     fi
-    echo "dollar 3 = $3"
     if [ $# = 3 ];then
       image_dir=`get_path $3`
       if [ "image_dir"x = ""x ];then
@@ -267,7 +287,6 @@ function admin_cmd()
       fi
     fi
     init_env_admin
-    echo "$func: recover = $pool_id $image_name $snap_name $image_dir"
     recover $pool_id $image_name $snap_name $image_dir
   elif [ "$1"x = "scp_files"x ];then
     if [ $# -gt 1 ];then
@@ -282,7 +301,7 @@ function admin_cmd()
     admin_parse_osd
     scp_file $2
   else
-    echo "$func: command $1 not found"
+    echo "$func: $1: command not found"
   fi
 }
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # author: min chen(minchen@ubuntukylin.com) 2014 2015
 
-# unit test case for image with nosnap
+# unit test case for rbd-recover-tool
 
 #prepare:
 # - write config files: config/osd_host, config/mon_host, config/storage_path, config/mds_host if exist mds

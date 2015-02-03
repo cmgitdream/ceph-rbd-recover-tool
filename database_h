@@ -1056,8 +1056,6 @@ function recover_image()
     exit
   fi
 
-  echo "$func: before = $1 $2 $3 $4"
-
   local pool_id=$1
   local img_name=$2
   local snap_name=$3
@@ -1067,25 +1065,23 @@ function recover_image()
     snap_name=
   fi
   if [ "$backup_dir"x = ""x ];then
-    backup_dir=/var/default_backup_dir
+    backup_dir=$default_backup_dir
   fi
 
-  echo "$func: after = $pool_id $img_name $snap_name $backup_dir"
-
-  #recover with nosnap
+  #recover image with nosnap
   if [ "$snap_name"x = ""x ];then
     discover_image_nosnap $pool_id $img_name #input image_name 
     local image_hobjects=$images/pool_$pool_id/$image_name_in/$image_name_in
     copy_image_nosnap_single_thread $pool_id $image_hobjects $backup_dir
 
-  #recover with snap
+  #recover image with snap
   else
 
-    # check if recover head already
+    # check if recovered head already
     local img_hobjects_path=$images/pool_$pool_id/$img_name/$img_name
     local img_file_path=$backup_dir/pool_$pool_id/$img_name/$img_name
     if [ ! -e $img_hobjects_path ] || [ ! -e $img_file_path ];then
-      echo "$func: $img_name@$snap_name : can not rollback to snapshot, please recover image first"
+      echo "$func: $img_name@$snap_name : can not rollback to snapshot, please recover image head first"
       exit
     fi
 

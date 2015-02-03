@@ -4,7 +4,6 @@
 
 my_dir=$(dirname "$0")
 . $my_dir/common_h
-# 1. get pg epoch of an osd
 
 #pgid_list=$single_node/$cluster-$id/pgid_list
 function get_pgid_list()
