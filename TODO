@@ -1,6 +1,2 @@
 
-1. journal
-2. osdmap change
-   -pg migration
-3. pg_epoch & object data are not sync
-
+1.support clone imag
