@@ -64,15 +64,15 @@ function init()
     exit
   fi
   if [ ! -s $osd_host ];then
-    echo "$func: osd_host not exists or empty"
+    echo "$func: config/osd_host not exists or empty"
     exit
   fi
   if [ ! -s $mon_host ];then
-    echo "$func: mon_host not exists or empty"
+    echo "$func: config/mon_host not exists or empty"
     exit
   fi
   if [ ! -e $mds_host ];then
-    echo "$func: mds_host not exists"
+    echo "$func: config/mds_host not exists"
     exit
   fi
   test_dir=$1

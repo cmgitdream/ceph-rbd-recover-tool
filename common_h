@@ -143,7 +143,7 @@ function init_env_admin()
   local pwd_path=`pwd`
   osd_host_mapping=$pwd_path/config/osd_host_mapping
   if [ ! -s $osd_host_path ];then
-    echo "$func: osd_host_path not exists or empty"
+    echo "$func: config/osd_host_path not exists or empty"
     exit
   fi
   if [ ! -e $rbd_image ];then
@@ -154,11 +154,11 @@ function init_env_admin()
   fi
 
   if [ ! -s $mon_host ];then
-    echo "$func: mon_host not exists or empty"
+    echo "$func: config/mon_host not exists or empty"
     exit
   fi
   if [ ! -e $mds_host ];then
-    echo "$func: mds_host not exists"
+    echo "$func: config/mds_host not exists"
     exit
   fi
 
