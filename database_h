@@ -1,6 +1,20 @@
 #!/bin/bash
 # file: database_h
-# author: min chen(minchen@ubuntukylin.com) 2014 2015
+#
+# Copyright (C) 2015 Ubuntu Kylin
+#
+# Author: Min Chen <minchen@ubuntukylin.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Library Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Library Public License for more details.
+#
 
 my_dir=$(dirname "$0")
 
@@ -23,9 +37,10 @@ function gen_database()
   rm -rf $images
   rm -rf $raw
   mkdir -p $database
-  #for host in `cat $osd_host`
   local host=
   local data_path=
+
+  trap 'echo $func failed; exit;' INT HUP
   while read line
   do
     {
@@ -48,7 +63,8 @@ function gen_database()
 function gather_hobject_common()
 {
   func="gather_hobject_common"
-  #echo "$func: $1 $2 $3 "
+
+  trap 'echo $func failed; exit;' INT HUP
   if [ $# -lt 2 ];then
     echo "$func: parameters: <pool_id> <image_prefix> [<snap_id>]"  
     exit
@@ -407,7 +423,6 @@ function discover_image_nosnap()
   local image_name=$2
   pool_id=$(($pool_id))
   lookup_image $pool_id $image_name # assign $image_prefix
-  #echo "$func: image_prefix=$db_image_prefix"
   gather_hobject_nosnap $pool_id $db_image_prefix 
   if [ $? -ne 0 ];then
     exit
@@ -465,6 +480,7 @@ function gen_snapset_hobject()
   IFS=$'\n'
   local snaparr=(`cat $snaplist_path`) 
   # gather hobject for each snapshot
+  trap 'echo $func failed; exit;' INT HUP
   for line in ${snaparr[@]}
   do
     OOIFS=$IFS
@@ -532,6 +548,7 @@ function discover_image_snap()
   >$image_snap_hobject
   >$image_snap_hobject_head
 
+  trap 'echo $func failed; exit;' INT HUP
   # get each offset 's snapid hobject
   while read line
   do
@@ -612,6 +629,7 @@ function copy_image_nosnap_single_thread()
   local iend=
   local percent=
   
+  trap 'echo $func failed; exit;' INT HUP
   local unit=$((1<<$db_order))
   while read line
   do
@@ -760,6 +778,7 @@ function collect_image_snap_objects()
   echo -e "object_count\t$entry_count"
   echo -e "range\t\t[$start ~ $end] count:$entry_count"
 
+  trap 'echo $func failed; exit;' INT HUP
   for line in ${snap_arr[*]}
   do
     icount=$(($icount+1))    
@@ -880,6 +899,8 @@ function rollback_image_snap()
   local func="rollback_image_snap"
   
   echo "$func ..."
+  
+  trap 'echo $func failed; exit;' INT HUP
   if [ $# -lt 6 ];then
     echo "$func: parameters <pool_id> <image_name> <snap_id> <snap_object_dir> <backup_dir> <image_unit>"
     exit

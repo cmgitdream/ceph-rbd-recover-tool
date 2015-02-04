@@ -1,6 +1,20 @@
 #!/bin/bash
 # file: osd_job
-# author: min chen(minchen@ubuntukylin.com) 2014 2015
+#
+# Copyright (C) 2015 Ubuntu Kylin
+#
+# Author: Min Chen <minchen@ubuntukylin.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Library Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Library Public License for more details.
+#
 
 my_dir=$(dirname "$0")
 

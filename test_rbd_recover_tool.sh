@@ -1,5 +1,19 @@
 #!/bin/bash
-# author: min chen(minchen@ubuntukylin.com) 2014 2015
+#
+# Copyright (C) 2015 Ubuntu Kylin
+#
+# Author: Min Chen <minchen@ubuntukylin.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Library Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Library Public License for more details.
+#
 
 # unit test case for rbd-recover-tool
 
@@ -86,7 +100,7 @@ function do_gen_database()
     echo "$func: database already existed"
     exit
   fi
-  bash $tool_dir/admin_job database
+  bash $tool_dir/rbd-recover-tool database
   echo 1 >$gen_db 
 }
 
@@ -218,7 +232,7 @@ function recover_image()
   >$recover_md5_nosnap
   local snapshot=
   
-  bash $tool_dir/admin_job recover $pool_id/$image_name $recover_dir
+  bash $tool_dir/rbd-recover-tool recover $pool_id/$image_name $recover_dir
   md5sum $recover_image_dir/$image_name|awk '{print $1}' >$recover_md5_nosnap
 }
 
@@ -283,13 +297,13 @@ function recover_snapshots()
 
   
   # recover head
-  bash $tool_dir/admin_job recover $pool_id/$image_name $recover_dir
+  bash $tool_dir/rbd-recover-tool recover $pool_id/$image_name $recover_dir
 
   # recover snapshots
   for((i=1; i<10; i++))
   do
     snapshot=snap$i
-    bash $tool_dir/admin_job recover $pool_id/$image_name@$snapshot $recover_dir
+    bash $tool_dir/rbd-recover-tool recover $pool_id/$image_name@$snapshot $recover_dir
     pushd $recover_image_dir >/dev/null
     local chksum=`md5sum $image_name|awk '{print $1}'` 
     echo "$chksum  $image_name@$snapshot" >>@md5
@@ -434,6 +448,7 @@ function do_export_snap()
 # step 2: stop ceph cluster and gen database
 function stop_cluster_gen_database()
 {
+  trap 'echo stop ceph cluster failed; exit;' INT HUP
   stop_ceph 
   sleep 2
   check_ceph_service
