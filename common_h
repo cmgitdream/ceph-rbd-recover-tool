@@ -23,6 +23,7 @@ rbd_image=/var/rbd_tool/rbd_image
 database=$rbd_image/database
 image_coll_v1=$rbd_image/image_coll_v1
 image_coll_v2=$rbd_image/image_coll_v2
+image_coll_mappings=$rbd_image/image_coll_mappings
 pg_coll=$rbd_image/pg_coll
 images=$rbd_image/images
 images_meta=$rbd_image/images_meta

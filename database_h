@@ -27,6 +27,11 @@ db_image_size=
 db_order=
 db_snap_id=
 db_snap_image_size=
+db_parent_pool_id=
+db_parent_image_id=
+db_parent_snap_id=
+db_overlap=
+db_has_parent=0
 found=0
 
 #init osd_data and get all objects path
@@ -54,7 +59,48 @@ function gen_database()
     } &
   done < $osd_host_path
   wait
+  gen_image_id_name_mapppings
   echo "$func: finish"
+}
+
+function gen_image_id_name_mappings()
+{
+  local func="gen_image_id_name_mappings"
+  echo "$func ..."
+ 
+  local mappings=$rbd_image/image_coll_mappings
+  local image_names=/tmp/image_names.$$$$
+  # currently, when recovering clone image: only image v2 need to get image name by image id 
+  sed -n 's/.*\/rbd\\uid.\(.*\)__head_[0-9A-F]\{8\}__\([0-9a-f]\+\).*/\2 \1/p' $image_coll_v2|\
+	sort -u|awk '{print strtonum("0x"$1)" "$2}'|sed 's/\\u/_/g' > $image_names;
+  >$mappings
+  while read line
+  do
+  {
+    arr=(`echo $line`) 
+    #              pool_id  image_name 
+    lookup_image ${arr[0]} ${arr[1]} </dev/null >/dev/null
+    echo "$db_image_prefix $line" >>$mappings
+  } 
+  done < $image_names 
+  rm -f $image_names
+  #cat $mappings
+}
+
+function get_image_name_by_id()
+{
+  local func="get_image_name_by_id"
+  if [ ! -s $image_coll_mappings ];then
+    return 2 # not exists
+  fi
+  if [ $# -lt 1 ];then
+    return 1 
+  fi
+  local image_id=$1
+  echo "$func: image_id=$image_id"
+  local pattern="rbd_data.$image_id"
+  #awk '/'"$pattern"'/ {print $2" "$3}' $image_coll_mappings
+  awk '$1 == "'"$pattern"'" {print $2" "$3}' $image_coll_mappings
 }
 
 # collect hobjects from database 
@@ -397,6 +443,17 @@ function lookup_image()
     cat $result|awk '/^snapshot:/{print $2" "$3" "$4}' >$image_snaplist
   fi
   found=1
+  local arr=(`cat $result|awk '/^parent:/{print $2" "$3" "$4" "$5}'`)
+  if [ ${#arr[@]} -eq 0 ];then
+    rm -f $result
+    return
+  fi
+  echo ${arr[@]}
+  db_has_parent=1
+  db_parent_pool_id=${arr[0]}
+  db_parent_image_id=${arr[1]}
+  db_parent_snap_id=${arr[2]}
+  db_overlap=${arr[3]}
   rm -f $result
 }
 
@@ -425,7 +482,7 @@ function discover_image_nosnap()
   lookup_image $pool_id $image_name # assign $image_prefix
   gather_hobject_nosnap $pool_id $db_image_prefix 
   if [ $? -ne 0 ];then
-    exit
+    return 1
   fi
   local image_hobjects_stable_nosnap=$images/pool_$pool_id/$db_image_prefix/$db_image_prefix"_head"
   local image_hobjects_dir=$images/pool_$pool_id/$image_name_in
@@ -573,13 +630,15 @@ function copy_image_nosnap_single_thread()
 {
   local func="copy_image_nosnap_single_thread"
   echo "$func ..."
-  if [ $# -lt 3 ];then
-    echo "$func: parameters: <pool_id> <image_hobjects> <backup_dir>"
+  if [ $# -lt 5 ];then
+    echo "$func: parameters: <pool_id> <image_hobjects> <image_size> <backup_dir> <force_clean>"
     exit
   fi
   local pool_id=$1
   local image_hobjects=$2
-  local backup_dir=$3
+  local image_size=$3
+  local backup_dir=$4
+  local force_clean=$5
   pool_id=$(($pool_id))
 
   # make sure lookup_image first
@@ -605,8 +664,10 @@ function copy_image_nosnap_single_thread()
     touch $LOCK
   fi
 
-  >$image_file
-  truncate -s $db_image_size $image_file 
+  if [ $force_clean ];then
+    >$image_file
+  fi
+  truncate -s $image_size $image_file 
   echo "head">$CURRENT
 
   local count=$(($db_image_size >> $db_order))
@@ -1067,6 +1128,54 @@ function rollback_image_snap()
   fi
 }
 
+function copy_clone_image_nosnap_single_thread()
+{
+  local func="copy_clone_image_single_thread"
+ 
+  echo "$func: para counts = $#"
+  if [ $# -lt 10 ];then
+    echo "func: parameters: <pool_id> <image_name> <image_unit> <image_size> <parent_pool_id> <parent_image_id> <parent_snap_id> <overlap> <image_hobjects> <backup_dir>" 
+    exit
+  fi
+  local pool_id=$1
+  local image_name=$2
+  local image_unit=$3 #object_size
+  local image_size=$4
+  local parent_pool_id=$5
+  local parent_image_id=$6
+  local parent_snap_id=$7
+  local overlap=$8
+  local image_hobjects=$9
+  local backup_dir=${10}
+
+  echo "$func: image_size=$image_size, overlap=$overlap"
+
+  local arr=(`get_image_name_by_id $parent_image_id`)
+  echo arr ${arr[@]}
+  if [ ${arr[0]} -ne $parent_pool_id ];then
+    echo "$func: decode pool_id not equal to head pool_id"
+    return 1
+  fi
+  local parent_image_name=${arr[1]} 
+  local parent_image=$backup_dir/pool_$parent_pool_id/$parent_image_name/$parent_image_name 
+  local clone_image=$backup_dir/pool_$pool_id/$image_name/$image_name
+  if [ ! -e $parent_image ];then
+    echo "$func: recover parent image $parent_pool_id/$parent_image_name@$parent_snap_id before clone image" 
+    exit
+  fi
+  
+  >$clone_image
+  dd if=$parent_image of=$clone_image conv=notrunc
+
+  if [ $? -ne 0 ];then
+    echo "$func: copy parent image failed"
+    exit
+  fi
+
+  truncate -s $overlap $clone_image
+  copy_image_nosnap_single_thread $pool_id $image_hobjects $image_size $backup_dir 0
+}  
+
 function recover_image()
 {
   local func="recover_image"
@@ -1076,6 +1185,10 @@ function recover_image()
     echo "$func: paramters: <pool_id> <image_name> <snap_name> [<backup_dir>]"
     exit
   fi
+  if [ ! -e $image_coll_mappings ];then
+    gen_image_id_name_mappings
+  fi
+
 
   local pool_id=$1
   local img_name=$2
@@ -1091,9 +1204,20 @@ function recover_image()
 
   #recover image with nosnap
   if [ "$snap_name"x = ""x ];then
+    echo "before"
     discover_image_nosnap $pool_id $img_name #input image_name 
+    echo "after"
     local image_hobjects=$images/pool_$pool_id/$image_name_in/$image_name_in
-    copy_image_nosnap_single_thread $pool_id $image_hobjects $backup_dir
+
+    local image_unit=$((1<<$db_order))
+    echo "$func: has_parent=$db_has_parent"
+    if [ $db_has_parent ];then
+      copy_clone_image_nosnap_single_thread $pool_id $img_name $image_unit $db_image_size \
+	$db_parent_pool_id $db_parent_image_id $db_parent_snap_id $db_overlap \
+	$image_hobjects $backup_dir;     
+      return
+    fi
+    copy_image_nosnap_single_thread $pool_id $image_hobjects $db_image_size $backup_dir 1
 
   #recover image with snap
   else

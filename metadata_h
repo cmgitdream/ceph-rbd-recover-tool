@@ -286,6 +286,9 @@ function get_image_metadata_v2()
 
   # list snapshot
   list_snaps_v2 $1 $2
+  
+  # show parent
+  get_parent_info $1
 }
 
 # struct cls_rbd_snap {
@@ -365,4 +368,82 @@ function list_snaps_v2()
   done
 }
 
+# get parent pool_id, image_id, snap_id , overlap by decode
+# struct cls_rbd_parent {
+# 1	u8	struct_v
+# 1	u8	struct_compat
+# 4	u32	struct_len
+# 8	i64 	pool;         ///< parent pool id
+# 4	u32	len of string 
+# len	string	id;           ///< parent image id
+# 8	u64	snapid;       ///< parent snapid we refer to
+# 8  	u64	overlap;      ///< portion of this image mapped onto parent (bytes)
+# }
+function get_parent_info()
+{
+  local func="get_parent_info"
+  if [ $# -lt 1 ];then
+    #echo "$func: parameters: <image_meta_seq>"
+    exit
+  fi
+  local meta_header_seq=`printf "%016d" $1`
+  local prefix="_USER_"$meta_header_seq"_USER_"
+  local key=parent
+  local parent_info=/tmp/parent_info.$$$$
+  local arr=(`ceph-kvstore-tool $omap_path get $prefix $key| awk -F ":" '{print $2}'`)
+  if [ ${#arr[@]} -eq 0 ];then
+    #echo "$func: parent not exists"
+    exit
+  fi
+  local pool_id=-1
+  local image_id=
+  local snap_id=0
+  local overalp=0
+  #decode cls_rbd_parent
+  #pool id
+  local tmp=
+  for((i=13; i>=6; i--))
+  do
+    tmp="$tmp${arr[$i]}"  
+  done
+  pool_id=$((16#$tmp))
+
+  #image_id
+  local len=0
+  tmp=
+  for((i=17; i>=14; i--))
+  do
+    tmp="$tmp${arr[$i]}"
+  done
+  len=$((16#$tmp))
+  local string_pivot=$((18+$len))
+  for((i=18; i<$string_pivot; i++))
+  do
+    # convert ascii to char
+    local char=`echo -e "\x${arr[$i]}"` 
+    image_id="$image_id$char"
+  done
+
+  #snap_id
+  tmp=
+  local snap_pivot=$((8+$string_pivot))
+  for((i=$(($snap_pivot - 1)); i>=$string_pivot; i--))
+  do
+    tmp="$tmp${arr[$i]}"
+  done
+  snap_id=$((16#$tmp))
+
+  #overlap
+  tmp=
+  local overlap_pivot=$((8+$snap_pivot))
+  for((i=$(($overlap_pivot - 1)); i>=$snap_pivot; i--))
+  do
+    tmp="$tmp${arr[$i]}"
+  done
+  overlap=$((16#$tmp))
+  
+  echo 
+  echo -e "\t\tPOOL_ID\tIMAGE_ID\tSNAP_ID\tOVERLAP"
+  echo -e "parent:\t\t$pool_id\t$image_id\t$snap_id\t$overlap"
+}
 #======================================== end image format v2 ========================================  
