@@ -59,7 +59,7 @@ function gen_database()
     } &
   done < $osd_host_path
   wait
-  gen_image_id_name_mapppings
+  gen_image_id_name_mappings
   echo "$func: finish"
 }
 
@@ -84,7 +84,6 @@ function gen_image_id_name_mappings()
   } 
   done < $image_names 
   rm -f $image_names
-  #cat $mappings
 }
 
 function get_image_name_by_id()
@@ -97,7 +96,6 @@ function get_image_name_by_id()
     return 1 
   fi
   local image_id=$1
-  echo "$func: image_id=$image_id"
   local pattern="rbd_data.$image_id"
   #awk '/'"$pattern"'/ {print $2" "$3}' $image_coll_mappings
   awk '$1 == "'"$pattern"'" {print $2" "$3}' $image_coll_mappings
@@ -155,7 +153,8 @@ function gather_hobject_common()
   grep -r -E $dump_image_prefix""$pattern * >$image_hobjects_raw
   if [ ! -s $image_hobjects_raw ];then
     echo "$func: image snap [ $image_prefix"$psuffix" ] is empty"
-    return 1 #no data available
+    >$image_hobjects_stable
+    return 0 #no data available
   fi
   popd >/dev/null
 
@@ -448,7 +447,6 @@ function lookup_image()
     rm -f $result
     return
   fi
-  echo ${arr[@]}
   db_has_parent=1
   db_parent_pool_id=${arr[0]}
   db_parent_image_id=${arr[1]}
@@ -492,6 +490,7 @@ function discover_image_nosnap()
   # mv image_prefix to image_name
   mv $image_hobjects_stable_nosnap $image_hobjects_dir/$image_name_in
   rm -rf $images/pool_$pool_id/$db_image_prefix
+  return 0
 }
 
 # get the offset snapid object 
@@ -624,6 +623,72 @@ function discover_image_snap()
   rm -rf $image_hobjects_dir_prefix
 }
 
+function copy_progress()
+{
+
+  local func="copy_progress"
+  if [ $# -lt 4 ];then
+    echo "$func: parameters: <image_file> <image_hobjects> <image_size> <order>"
+    return 1
+  fi
+
+  local image_file=$1
+  local image_hobjects=$2
+  local image_size=$3
+  local order=$4
+
+  if [ ! -s $image_hobjects ];then
+    return 0;
+  fi
+
+  local count=$((( $image_size + (1 << $order) - 1 ) >> $order))
+  local start=`cat $image_hobjects|head -n 1|awk '{print $4}'`
+  local end=`cat $image_hobjects|tail -n 1|awk '{print $4}'`
+  local entry_count=`cat $image_hobjects|wc -l`
+
+  local char_bits=$((`echo $start|wc -c` -1 ))
+  local format="%0"$char_bits"x"
+  
+  local expect_start=`printf $format 0`
+  local expect_end=`printf $format $(($count -1 ))`  
+
+  echo -e "object_count\t$entry_count"
+  echo -e "expect\t\t[$expect_start ~ $expect_end] count:$count"
+  echo -e "range\t\t[$start ~ $end] count:$entry_count"
+
+  local icount=0
+  local istart=
+  local iend=
+  local percent=
+  
+  trap 'echo $func failed; exit;' INT HUP
+  local unit=$((1<<$order))
+  while read line
+  do
+  {
+    icount=$(($icount+1))
+    node=`echo $line|awk '{print $1}'` 
+    hobject=`echo $line|awk '{print $3}'` 
+    offset=`echo $line|awk '{print $4}'`
+    off=$((16#$offset))
+    if [ $icount = 1 ];then
+      istart=$offset
+    fi
+    hobject=`dump_backslash $hobject`
+    iend=$offset
+    sshcmd="cat $hobject"
+    ssh $ssh_option $node $sshcmd < /dev/null | dd of=$image_file bs=$unit seek=$off conv=notrunc 2>/dev/null
+    percent=`echo "scale=3; 100*$icount/$entry_count"|bc`
+    tput sc  #record current cursor
+    echo -n -e "complete\t[$istart ~ $iend] $icount/$entry_count ==> "$percent"%"
+    if [ $icount != $entry_count ];then
+      tput rc # backport most recent cursor
+    fi
+  }
+  done < $image_hobjects
+  echo
+}
+
 # after discover_image_nosnap
 # collect objects from osds one by one in sequence
 function copy_image_nosnap_single_thread()
@@ -667,56 +732,10 @@ function copy_image_nosnap_single_thread()
   if [ $force_clean ];then
     >$image_file
   fi
-  truncate -s $image_size $image_file 
   echo "head">$CURRENT
+  copy_progress $image_file $image_hobjects $db_image_size $db_order
 
-  local count=$(($db_image_size >> $db_order))
-  local start=`cat $image_hobjects|head -n 1|awk '{print $4}'`
-  local end=`cat $image_hobjects|tail -n 1|awk '{print $4}'`
-  local entry_count=`cat $image_hobjects|wc -l`
-
-  local char_bits=$((`echo $start|wc -c` -1 ))
-  local format="%0"$char_bits"x"
-  
-  local expect_start=`printf $format 0`
-  local expect_end=`printf $format $(($count -1 ))`  
-
-  echo -e "object_count\t$entry_count"
-  echo -e "expect\t\t[$expect_start ~ $expect_end] count:$count"
-  echo -e "range\t\t[$start ~ $end] count:$entry_count"
-
-  local icount=0
-  local istart=
-  local iend=
-  local percent=
-  
-  trap 'echo $func failed; exit;' INT HUP
-  local unit=$((1<<$db_order))
-  while read line
-  do
-  {
-    icount=$(($icount+1))
-    node=`echo $line|awk '{print $1}'` 
-    hobject=`echo $line|awk '{print $3}'` 
-    offset=`echo $line|awk '{print $4}'`
-    off=$((16#$offset))
-    if [ $icount = 1 ];then
-      istart=$offset
-    fi
-    hobject=`dump_backslash $hobject`
-    iend=$offset
-    sshcmd="cat $hobject"
-    ssh $ssh_option $node $sshcmd < /dev/null | dd of=$image_file bs=$unit seek=$off conv=notrunc 2>/dev/null
-    percent=`echo "scale=3; 100*$icount/$entry_count"|bc`
-    tput sc  #record current cursor
-    echo -n -e "complete\t[$istart ~ $iend] $icount/$entry_count ==> "$percent"%"
-    if [ $icount != $entry_count ];then
-      tput rc # backport most recent cursor
-    fi
-  }
-  done < $image_hobjects
-
-  echo
+  truncate -s $image_size $image_file 
   echo -n "size: "
   ls -lh $image_file|awk '{print  $5"\t"$9}'
   echo -n "du:   "
@@ -899,15 +918,16 @@ function copy_image_snap_single_thread()
 {
   local func="copy_image_snap_single_thread"
   if [ $# -lt 6 ];then
-    echo "$func: parameters: <pool_id> <image_name> <snap_id> <snap_hobjects> <head_hobjects> <backup_dir>" 
+    echo "$func: parameters: <pool_id> <image_name> <image_size> <snap_id> <snap_hobjects> <head_hobjects> <backup_dir>" 
     exit
   fi
   local pool_id=$1
   local image_name=$2
-  local snap_id=$3
-  local snap_hobjects=$4
-  local head_hobjects=$5
-  local backup_dir=$6
+  local image_size=$3
+  local snap_id=$4
+  local snap_hobjects=$5
+  local head_hobjects=$6
+  local backup_dir=$7
   pool_id=$(($pool_id))
 
   local CURRENT=$backup_dir/pool_$pool_id/$image_name/@CURRENT
@@ -1128,18 +1148,20 @@ function rollback_image_snap()
   fi
 }
 
+# firstly, copy parent image snap as clone image
+# secondly, truncate clone image to size:overlap
+# thirdly, copy objects at range:[overlap ~ size -1] into clone image
+# finally, clone image is independent of parent image snap, and can be rolled back to clone image's snapshot
 function copy_clone_image_nosnap_single_thread()
 {
   local func="copy_clone_image_single_thread"
- 
-  echo "$func: para counts = $#"
   if [ $# -lt 10 ];then
-    echo "func: parameters: <pool_id> <image_name> <image_unit> <image_size> <parent_pool_id> <parent_image_id> <parent_snap_id> <overlap> <image_hobjects> <backup_dir>" 
+    echo "func: parameters: <pool_id> <image_name> <order> <image_size> <parent_pool_id> <parent_image_id> <parent_snap_id> <overlap> <image_hobjects> <backup_dir>" 
     exit
   fi
   local pool_id=$1
   local image_name=$2
-  local image_unit=$3 #object_size
+  local order=$3 #object_size
   local image_size=$4
   local parent_pool_id=$5
   local parent_image_id=$6
@@ -1148,23 +1170,39 @@ function copy_clone_image_nosnap_single_thread()
   local image_hobjects=$9
   local backup_dir=${10}
 
-  echo "$func: image_size=$image_size, overlap=$overlap"
-
   local arr=(`get_image_name_by_id $parent_image_id`)
-  echo arr ${arr[@]}
   if [ ${arr[0]} -ne $parent_pool_id ];then
     echo "$func: decode pool_id not equal to head pool_id"
     return 1
   fi
   local parent_image_name=${arr[1]} 
-  local parent_image=$backup_dir/pool_$parent_pool_id/$parent_image_name/$parent_image_name 
-  local clone_image=$backup_dir/pool_$pool_id/$image_name/$image_name
-  if [ ! -e $parent_image ];then
-    echo "$func: recover parent image $parent_pool_id/$parent_image_name@$parent_snap_id before clone image" 
+  local parent_dir=$backup_dir/pool_$parent_pool_id/$parent_image_name
+  local clone_dir=$backup_dir/pool_$pool_id/$image_name
+  local parent_image=$parent_dir/$parent_image_name 
+  local clone_image=$clone_dir/$image_name
+  local parent_CURRENT=$parent_dir/@CURRENT
+  local parent_snaplist=$images/pool_$pool_id/$parent_image_name/@snaplist
+  local parent_snap_name=
+
+  if [ ! -e $clone_dir ];then
+    mkdir -p $clone_dir
+  fi
+
+  if [ ! -e $parent_image ] || [ ! -e $parent_CURRENT ] || [ `cat $parent_CURRENT`x != "$parent_snap_id"x ];then
+    if [ ! -e $parent_snaplist ];then
+	lookup_image $pool_id $parent_image_name > /dev/null
+    fi
+    if [ ! -e $parent_snaplist ];then
+      echo "$func: get parent snaplist failed"
+      exit
+    fi
+    parent_snap_name=`awk '$1 == "'$parent_snap_id'" {print $2}' $parent_snaplist`
+    echo "$func: recover parent_image_snap [ $parent_pool_id/$parent_image_name@$parent_snap_name ] before clone image" 
     exit
   fi
   
   >$clone_image
+  echo "$func: copy parent_image_snap:"
   dd if=$parent_image of=$clone_image conv=notrunc
 
   if [ $? -ne 0 ];then
@@ -1173,7 +1211,13 @@ function copy_clone_image_nosnap_single_thread()
   fi
 
   truncate -s $overlap $clone_image
-  copy_image_nosnap_single_thread $pool_id $image_hobjects $image_size $backup_dir 0
+  copy_progress $clone_image $image_hobjects $image_size $order 
+  truncate -s $image_size $clone_image
+  #copy_image_nosnap_single_thread $pool_id $image_hobjects $image_size $backup_dir 0
+  echo -n "size: "
+  ls -lh $clone_image|awk '{print  $5"\t"$9}'
+  echo -n "du:   "
+  du -h $clone_image
 }  
 
 function recover_image()
@@ -1185,10 +1229,6 @@ function recover_image()
     echo "$func: paramters: <pool_id> <image_name> <snap_name> [<backup_dir>]"
     exit
   fi
-  if [ ! -e $image_coll_mappings ];then
-    gen_image_id_name_mappings
-  fi
-
 
   local pool_id=$1
   local img_name=$2
@@ -1202,21 +1242,34 @@ function recover_image()
     backup_dir=$default_backup_dir
   fi
 
+  if [ ! -e $image_coll_mappings ];then
+    gen_image_id_name_mappings
+  fi
+
+  # copy @snaplist
+  local snaplist_from=$images/pool_$pool_id/$img_name/@snaplist
+  local snaplist_to=$backup_dir/pool_$pool_id/$img_name/@snaplist
+  mkdir -p $backup_dir/pool_$pool_id/$img_name
+  if [ ! -s $snaplist_from ] && [ ! -e $snaplist_to ];then
+    cp $snaplist_from $snaplist_to
+  fi
+
   #recover image with nosnap
   if [ "$snap_name"x = ""x ];then
-    echo "before"
     discover_image_nosnap $pool_id $img_name #input image_name 
-    echo "after"
+    if [ $? -ne 0 ];then
+      echo "$func: discover_image_nosnap failed"
+      exit
+    fi
     local image_hobjects=$images/pool_$pool_id/$image_name_in/$image_name_in
-
-    local image_unit=$((1<<$db_order))
-    echo "$func: has_parent=$db_has_parent"
-    if [ $db_has_parent ];then
-      copy_clone_image_nosnap_single_thread $pool_id $img_name $image_unit $db_image_size \
+    # recover clone image
+    if [ $db_has_parent -eq 1 ];then
+      copy_clone_image_nosnap_single_thread $pool_id $img_name $db_order $db_image_size \
 	$db_parent_pool_id $db_parent_image_id $db_parent_snap_id $db_overlap \
 	$image_hobjects $backup_dir;     
-      return
+      return 0
     fi
+    # recover NOT clone image (origin image)
     copy_image_nosnap_single_thread $pool_id $image_hobjects $db_image_size $backup_dir 1
 
   #recover image with snap
@@ -1234,6 +1287,11 @@ function recover_image()
     if [ "$snap_name"x = "@@"x ];then
       local head_dir=$backup_dir/pool_$pool_id/$img_name/@head
       if [ -e $head_dir ];then
+	if [ `ls $head_dir`x = ""x ];then
+	  echo "$func: head dir is empty, simply rollback to head"
+	  echo "head" > $backup_dir/pool_$pool_id/$img_name/@CURRENT
+	  return 0
+	fi
 	local unit=`pushd $head_dir >/dev/null; ls|head -n 1|xargs -n 1 stat|awk '/Size:/{print $2}'`
         # rollback to head
         rollback_image_snap $pool_id $img_name -2 $backup_dir/$img_name/@head $backup_dir $unit
@@ -1251,7 +1309,7 @@ function recover_image()
     local snap_object_dir=$backup_dir/pool_$pool_id/$image_name_in/@$db_snap_id
     local image_path=$backup_dir/pool_$pool_id/$image_name_in/$image_name_in
     local image_unit=$((1<<$db_order))
-    copy_image_snap_single_thread $pool_id $image_name_in $db_snap_id $snap_hobjects $head_hobjects $backup_dir
+    copy_image_snap_single_thread $pool_id $image_name_in $db_image_size $db_snap_id $snap_hobjects $head_hobjects $backup_dir
     rollback_image_snap $pool_id $image_name_in $db_snap_id $snap_object_dir $backup_dir $image_unit 
     echo "$image_name_in@$snap_name : $image_path"
   fi
